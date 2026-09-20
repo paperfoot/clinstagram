@@ -282,7 +282,9 @@ def login_private(config: LoginConfig, existing_session: str = "") -> LoginResul
                     from instagrapi.mixins.totp import TOTPMixin
 
                     code = TOTPMixin.totp_generate_code(config.totp_seed)
-                    cl.two_factor_login(code)
+                    # instagrapi handles the second step through login();
+                    # two_factor_login was removed from current releases.
+                    cl.login(config.username, config.password, verification_code=code)
                     if _validate_session(cl):
                         new_session = json.dumps(cl.get_settings())
                         return LoginResult(success=True, username=config.username, session_json=new_session)
@@ -321,7 +323,8 @@ def login_private(config: LoginConfig, existing_session: str = "") -> LoginResul
                 from instagrapi.mixins.totp import TOTPMixin
 
                 code = TOTPMixin.totp_generate_code(config.totp_seed)
-                cl.two_factor_login(code)
+                # Pass the generated TOTP code through instagrapi's supported API.
+                cl.login(config.username, config.password, verification_code=code)
             except Exception as exc:
                 return LoginResult(success=False, username=config.username, error=f"2FA login failed: {exc}")
         else:
