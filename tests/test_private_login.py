@@ -192,7 +192,7 @@ class TestLoginPrivate:
         from instagrapi.exceptions import TwoFactorRequired
 
         cl = MagicMock()
-        cl.login.side_effect = TwoFactorRequired()
+        cl.login.side_effect = [TwoFactorRequired(), True]
         cl.get_settings.return_value = {"uuid": "abc", "sessionid": "sess"}
         MockClient.return_value = cl
 
@@ -202,7 +202,7 @@ class TestLoginPrivate:
             result = login_private(config)
 
         assert result.success is True
-        cl.two_factor_login.assert_called_once_with("123456")
+        cl.login.assert_any_call("testuser", "pass123", verification_code="123456")
 
     @patch("instagrapi.Client")
     def test_fresh_login_generic_error(self, MockClient):
