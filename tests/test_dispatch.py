@@ -549,3 +549,19 @@ class TestErrorClassification:
         assert _classify_error(RuntimeError("withholding feeds from this session; log in elsewhere")) == "api"
         assert _classify_error(RuntimeError("failed to generate thumbnail")) == "api"
         assert _classify_error(RuntimeError("rate limit exceeded")) == "rate"
+
+
+def test_not_found_beats_web_fallback_401():
+    from instagrapi.exceptions import ClientNotFoundError, ClientUnauthorizedError
+    from clinstagram.commands._dispatch import _classify_error
+
+    try:
+        try:
+            try:
+                raise ClientNotFoundError("usernameinfo 404")
+            except ClientNotFoundError:
+                raise ClientUnauthorizedError("web_profile_info 401")
+        except ClientUnauthorizedError as e:
+            raise RuntimeError(f"user_info failed: {e}")
+    except RuntimeError as outer:
+        assert _classify_error(outer) == "not_found"

@@ -30,8 +30,12 @@ from clinstagram._console import console
 _RATE_TYPES = {"PleaseWaitFewMinutes", "RateLimitError", "ClientThrottledError", "FeedbackRequired"}
 _AUTH_TYPES = {
     "LoginRequired", "ClientLoginRequired", "BadPassword", "ReloginAttemptExceeded",
-    "TwoFactorRequired", "ClientUnauthorizedError",
+    "TwoFactorRequired",
 }
+# instagrapi falls back to the logged-out web API after a private-API miss; that
+# fallback's 401 says nothing about our session, so a not-found anywhere in the
+# chain wins over it.
+_NOT_FOUND_TYPES = {"UserNotFound", "MediaNotFound", "ClientNotFoundError", "HashtagNotFound"}
 _GRAPH_RATE_CODES = {4, 17, 32, 613}  # app / user / page / custom rate limits
 _GRAPH_AUTH_CODES = {102, 190}  # session invalid, access token invalid or expired
 _RATE_RE = re.compile(r"rate.?limit|request limit|throttl|too many requests|please wait a few minutes|\b429\b", re.I)
@@ -44,13 +48,20 @@ _AUTH_RE = re.compile(
 
 
 def _classify_error(exc: BaseException) -> str:
-    """Map a backend failure to rate | challenge | auth | api.
+    """Map a backend failure to not_found | rate | challenge | auth | api.
 
     Backends wrap instagrapi errors, so walk the cause/context chain and trust
     exception types first; message patterns are a fallback for Graph/HTTP errors.
     """
-    seen: set[int] = set()
+    chain: list[BaseException] = []
     cur: BaseException | None = exc
+    while cur is not None and all(cur is not c for c in chain):
+        chain.append(cur)
+        cur = cur.__cause__ or cur.__context__
+    if any(type(c).__name__ in _NOT_FOUND_TYPES for c in chain):
+        return "not_found"
+    seen: set[int] = set()
+    cur = exc
     while cur is not None and id(cur) not in seen:
         seen.add(id(cur))
         name = type(cur).__name__
@@ -538,7 +549,13 @@ def dispatch(
     except Exception as exc:
         error_str = str(exc)
         kind = _classify_error(exc)
-        if kind == "rate":
+        if kind == "not_found":
+            output_error(ctx, CLIError(
+                exit_code=ExitCode.USER_ERROR,
+                error=f"Not found on Instagram: {error_str}",
+                remediation="Check the username, media ID, shortcode or URL",
+            ))
+        elif kind == "rate":
             output_error(ctx, CLIError(
                 exit_code=ExitCode.RATE_LIMITED,
                 error=error_str,
