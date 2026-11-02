@@ -4,7 +4,6 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
-import httpx
 
 _temp_files: list[Path] = []
 
@@ -59,6 +58,8 @@ def resolve_media(source: str, needs_url: bool) -> str:
         tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
         downloaded = 0
         try:
+            import httpx
+
             with httpx.stream("GET", source, follow_redirects=True, timeout=30.0) as response:
                 response.raise_for_status()
                 # Early rejection via Content-Length if available

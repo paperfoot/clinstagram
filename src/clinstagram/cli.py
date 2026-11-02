@@ -333,40 +333,42 @@ def activity(
     dispatch(ctx, Feature.ACTIVITY, lambda b: b.activity(limit))
 
 
-# Lazy-load command groups to avoid importing instagrapi/httpx at startup.
-def _lazy_register() -> None:
-    from clinstagram.commands.analytics import analytics_app
-    from clinstagram.commands.auth import auth_app
-    from clinstagram.commands.comments import comments_app
-    from clinstagram.commands.config_cmd import config_app
-    from clinstagram.commands.dm import dm_app
-    from clinstagram.commands.followers import followers_app
-    from clinstagram.commands.hashtag import hashtag_app
-    from clinstagram.commands.like import like_app
-    from clinstagram.commands.media import media_app
-    from clinstagram.commands.post import post_app
-    from clinstagram.commands.profile import profile_app
-    from clinstagram.commands.skill_install import skill_app
-    from clinstagram.commands.story import story_app
-    from clinstagram.commands.user import user_app
-
-    app.add_typer(auth_app, name="auth")
-    app.add_typer(config_app, name="config")
-    app.add_typer(profile_app, name="profile")
-    app.add_typer(post_app, name="post")
-    app.add_typer(dm_app, name="dm")
-    app.add_typer(story_app, name="story")
-    app.add_typer(comments_app, name="comments")
-    app.add_typer(analytics_app, name="analytics")
-    app.add_typer(followers_app, name="followers")
-    app.add_typer(user_app, name="user")
-    app.add_typer(like_app, name="like")
-    app.add_typer(hashtag_app, name="hashtag")
-    app.add_typer(media_app, name="media")
-    app.add_typer(skill_app, name="skill")
+def _group_loaders() -> dict:
+    """name -> import path of each command group (imported only when registered)."""
+    return {
+        "auth": ("clinstagram.commands.auth", "auth_app"),
+        "config": ("clinstagram.commands.config_cmd", "config_app"),
+        "profile": ("clinstagram.commands.profile", "profile_app"),
+        "post": ("clinstagram.commands.post", "post_app"),
+        "dm": ("clinstagram.commands.dm", "dm_app"),
+        "story": ("clinstagram.commands.story", "story_app"),
+        "comments": ("clinstagram.commands.comments", "comments_app"),
+        "analytics": ("clinstagram.commands.analytics", "analytics_app"),
+        "followers": ("clinstagram.commands.followers", "followers_app"),
+        "user": ("clinstagram.commands.user", "user_app"),
+        "like": ("clinstagram.commands.like", "like_app"),
+        "hashtag": ("clinstagram.commands.hashtag", "hashtag_app"),
+        "media": ("clinstagram.commands.media", "media_app"),
+        "skill": ("clinstagram.commands.skill_install", "skill_app"),
+    }
 
 
-_lazy_register()
+def _register_groups() -> None:
+    """Register command groups. The console entry point (clinstagram.entry) may
+    narrow this to the one group an invocation targets; importing this module
+    directly (tests, `python -m`) registers everything."""
+    import importlib
+
+    import clinstagram
+
+    only = getattr(clinstagram, "_only_group", None)
+    for name, (module, attr) in _group_loaders().items():
+        if only is not None and name != only:
+            continue
+        app.add_typer(getattr(importlib.import_module(module), attr), name=name)
+
+
+_register_groups()
 
 
 if __name__ == "__main__":

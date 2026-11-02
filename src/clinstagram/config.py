@@ -1,17 +1,13 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import MISSING, dataclass, field, fields
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
-import tomli_w
+# Plain dataclasses instead of pydantic: every CLI run parses the config, and
+# importing pydantic used to cost more than the rest of startup combined.
 
 
 class ComplianceMode(str, Enum):
@@ -27,7 +23,68 @@ class BackendType(str, Enum):
     PRIVATE = "private"
 
 
-class RateLimits(BaseModel):
+def _coerce_like(name: str, value: Any, default: Any) -> Any:
+    """Coerce value to the type of the field default (bool / int / float / str)."""
+    if isinstance(default, bool):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.lower() in ("true", "1", "yes", "on"):
+            return True
+        if isinstance(value, str) and value.lower() in ("false", "0", "no", "off"):
+            return False
+        raise ValueError(f"{name} must be a boolean, got {value!r}")
+    if isinstance(default, (int, float)) and isinstance(value, bool):
+        raise ValueError(f"{name} must be a number, got {value!r}")
+    if isinstance(default, int):
+        return int(value)
+    if isinstance(default, float):
+        return float(value)
+    if isinstance(default, str):
+        if not isinstance(value, str):
+            raise ValueError(f"{name} must be a string, got {value!r}")
+    return value
+
+
+class _Model:
+    """Dataclass mixin: validate on every assignment (incl. __init__), dump to dict."""
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        object.__setattr__(self, name, self._coerce(name, value))
+
+    def _coerce(self, name: str, value: Any) -> Any:
+        for f in fields(self):  # type: ignore[arg-type]
+            if f.name == name and f.default is not MISSING:
+                return _coerce_like(name, value, f.default)
+        return value
+
+    @classmethod
+    def from_dict(cls, data: Optional[dict]) -> Any:
+        names = {f.name for f in fields(cls)}  # type: ignore[arg-type]
+        return cls(**{k: v for k, v in (data or {}).items() if k in names})
+
+    def to_dict(self) -> dict:
+        out: dict[str, Any] = {}
+        for f in fields(self):  # type: ignore[arg-type]
+            out[f.name] = _dump(getattr(self, f.name))
+        return out
+
+    # Back-compat with the former pydantic models.
+    def model_dump(self, mode: str = "python") -> dict:
+        return self.to_dict()
+
+
+def _dump(v: Any) -> Any:
+    if isinstance(v, _Model):
+        return v.to_dict()
+    if isinstance(v, Enum):
+        return v.value
+    if isinstance(v, dict):
+        return {k: _dump(x) for k, x in v.items()}
+    return v
+
+
+@dataclass
+class RateLimits(_Model):
     graph_dm_per_hour: int = 200
     private_dm_per_hour: int = 30
     private_follows_per_day: int = 20
@@ -37,7 +94,8 @@ class RateLimits(BaseModel):
     request_jitter: bool = True
 
 
-class MediaStaging(BaseModel):
+@dataclass
+class MediaStaging(_Model):
     provider: str = "local-only"
     cleanup_after_publish: bool = True
 
@@ -48,15 +106,35 @@ WRITABLE_CONFIG_KEYS = frozenset({
 })
 
 
-class GlobalConfig(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
-
+@dataclass
+class GlobalConfig(_Model):
     default_account: str = "default"
     compliance_mode: ComplianceMode = ComplianceMode.HYBRID_SAFE
     preferred_backend: BackendType = BackendType.AUTO
     proxy: Optional[str] = None
-    rate_limits: RateLimits = Field(default_factory=RateLimits)
-    media_staging: MediaStaging = Field(default_factory=MediaStaging)
+    rate_limits: RateLimits = field(default_factory=RateLimits)
+    media_staging: MediaStaging = field(default_factory=MediaStaging)
+
+    def _coerce(self, name: str, value: Any) -> Any:
+        if name == "compliance_mode":
+            return ComplianceMode(value)
+        if name == "preferred_backend":
+            return BackendType(value)
+        if name == "default_account":
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError("default_account must be a non-empty string")
+            return value.strip()
+        if name == "proxy":
+            if value is None or (isinstance(value, str) and value.strip().lower() in ("", "none")):
+                return None
+            if not isinstance(value, str):
+                raise ValueError(f"proxy must be a string, got {value!r}")
+            return value.strip()
+        if name == "rate_limits" and isinstance(value, dict):
+            return RateLimits.from_dict(value)
+        if name == "media_staging" and isinstance(value, dict):
+            return MediaStaging.from_dict(value)
+        return value
 
 
 DEFAULT_CONFIG_DIR = Path.home() / ".clinstagram"
@@ -86,9 +164,13 @@ def load_config(config_dir: Optional[Path] = None) -> GlobalConfig:
         cfg = GlobalConfig()
         save_config(cfg, config_dir)
         return cfg
+    if sys.version_info >= (3, 11):
+        import tomllib
+    else:  # pragma: no cover
+        import tomli as tomllib
     with open(config_path, "rb") as f:
         data = tomllib.load(f)
-    return GlobalConfig(**data)
+    return GlobalConfig.from_dict(data)
 
 
 def _strip_none(obj: object) -> object:
@@ -101,8 +183,10 @@ def _strip_none(obj: object) -> object:
 
 
 def save_config(config: GlobalConfig, config_dir: Optional[Path] = None) -> None:
+    import tomli_w
+
     d = ensure_dirs(config_dir)
     config_path = d / "config.toml"
-    data = _strip_none(config.model_dump(mode="json"))
+    data = _strip_none(config.to_dict())
     with open(config_path, "wb") as f:
         tomli_w.dump(data, f)

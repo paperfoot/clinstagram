@@ -52,7 +52,7 @@ def _mock_stream(data: bytes, headers: dict | None = None):
 
 
 class TestResolveMediaUrlNeedsPath:
-    @patch("clinstagram.media.httpx.stream")
+    @patch("httpx.stream")
     def test_url_downloaded_to_temp(self, mock_stream):
         mock_stream.return_value = _mock_stream(b"fake image data")
 
@@ -66,7 +66,7 @@ class TestResolveMediaUrlNeedsPath:
         # Cleanup
         Path(result).unlink(missing_ok=True)
 
-    @patch("clinstagram.media.httpx.stream")
+    @patch("httpx.stream")
     def test_url_infers_extension(self, mock_stream):
         mock_stream.return_value = _mock_stream(b"fake video data")
 
@@ -75,7 +75,7 @@ class TestResolveMediaUrlNeedsPath:
         assert Path(result).suffix == ".mp4"
         Path(result).unlink(missing_ok=True)
 
-    @patch("clinstagram.media.httpx.stream")
+    @patch("httpx.stream")
     def test_url_default_extension(self, mock_stream):
         mock_stream.return_value = _mock_stream(b"data")
 
@@ -106,7 +106,7 @@ class TestResolveMediaLocalPath:
 
 
 class TestCleanupTempFiles:
-    @patch("clinstagram.media.httpx.stream")
+    @patch("httpx.stream")
     def test_cleanup_removes_files(self, mock_stream):
         mock_stream.return_value = _mock_stream(b"data")
 

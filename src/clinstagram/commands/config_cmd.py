@@ -22,7 +22,7 @@ config_app = make_subgroup("Manage configuration")
 def show(ctx: typer.Context):
     """Print current configuration."""
     config = ctx.obj["config"]
-    data = config.model_dump(mode="json")
+    data = config.to_dict()
     # Redact proxy credentials in output
     if "proxy" in data and data["proxy"]:
         data["proxy"] = _redact_proxy(data["proxy"])

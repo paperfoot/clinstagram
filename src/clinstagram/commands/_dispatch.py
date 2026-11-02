@@ -8,7 +8,6 @@ import time
 from typing import Any, Callable
 
 import typer
-from rich.console import Console
 
 def make_subgroup(help_text: str) -> typer.Typer:
     """Create a sub-Typer with proper no-args help."""
@@ -23,7 +22,7 @@ from clinstagram.config import ComplianceMode
 from clinstagram.media import cleanup_temp_files, resolve_media
 from clinstagram.models import CLIError, CLIResponse, ExitCode
 
-console = Console()
+from clinstagram._console import console
 
 
 _RATE_TYPES = {"PleaseWaitFewMinutes", "RateLimitError", "ClientThrottledError", "FeedbackRequired"}

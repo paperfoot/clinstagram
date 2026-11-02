@@ -4,15 +4,13 @@ import json
 from typing import Optional
 
 import typer
-from rich.console import Console
-from rich.table import Table
 
 from clinstagram.auth.keychain import SecretsStore
 from clinstagram.backends.capabilities import CAPABILITY_MATRIX
 from clinstagram.commands._dispatch import make_subgroup, output_error, output_success
 from clinstagram.models import CLIError, ExitCode
 
-console = Console()
+from clinstagram._console import console
 auth_app = make_subgroup("Manage authentication (Graph & Private)")
 
 
@@ -40,6 +38,8 @@ def status(ctx: typer.Context):
     }
 
     if not ctx.obj["json"]:
+        from rich.table import Table
+
         table = Table(title=f"Auth Status: {account}")
         table.add_column("Backend", style="cyan")
         table.add_column("Status", style="green")

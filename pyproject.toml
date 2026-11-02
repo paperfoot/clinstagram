@@ -25,7 +25,7 @@ dev = [
 ]
 
 [project.scripts]
-clinstagram = "clinstagram.cli:app"
+clinstagram = "clinstagram.entry:run"
 
 [tool.hatch.build.targets.sdist]
 include = ["src", "tests", "README.md", "LICENSE", "SKILL.md", "pyproject.toml"]
