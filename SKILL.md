@@ -54,16 +54,18 @@ clinstagram auth login         # Private API (username/password/2FA via instagra
 | `doctor` | `doctor [--deep] [--account NAME]` | Check environment and session health |
 | `update` | `update [--check] [--yes] [--pre]` | Check for or perform clinstagram updates |
 | `auth` | `status`, `login`, `connect-ig`, `connect-fb`, `probe`, `logout` | `status` is configured-only; `probe` is live validation |
-| `post` | `photo`, `video`, `reel`, `carousel` | Local write media requires `private-enabled` or a public URL |
-| `dm` | `inbox`, `thread ID\|@user`, `send @user "text"`, `send-media`, `search` | Cold DMs = private API only; numeric target = reply |
+| `post` | `photo`, `video`, `reel`, `carousel`, `edit MEDIA --caption`, `delete MEDIA` | Local write media requires `private-enabled` or a public URL |
+| `dm` | `inbox`, `pending`, `approve ID`, `seen ID`, `thread ID\|@user`, `send @user "text"`, `send-media`, `search` | Cold DMs = private API only; numeric target = reply; `pending` = message requests |
 | `story` | `list [@user]`, `post-photo`, `post-video`, `viewers ID` | |
-| `comments` | `list MEDIA`, `add`, `reply`, `delete` | pass the `comment_ref` from `comments list` |
-| `analytics` | `profile`, `post ID\|latest`, `hashtag TAG` | |
-| `followers` | `list`, `following`, `follow @user`, `unfollow @user` | follow/unfollow need `--enable-growth-actions` |
-| `user` | `info @user`, `search QUERY [--limit N]`, `posts @user` | official search is username-style lookup, broad search is private |
+| `comments` | `list MEDIA`, `add`, `reply`, `delete`, `like`, `unlike`, `pin`, `unpin` | pass the `comment_ref` from `comments list`; like/unlike need `--enable-growth-actions` |
+| `analytics` | `profile`, `post MEDIA\|latest`, `insights MEDIA`, `account`, `hashtag TAG` | `insights`/`account` need a Business or Creator account |
+| `followers` | `list [--user @x]`, `following [--user @x]`, `follow @user`, `unfollow @user` | defaults to your account; follow/unfollow need `--enable-growth-actions` |
+| `user` | `info @user`, `search QUERY [--limit N]`, `posts @user`, `tagged @user` | official search is username-style lookup, broad search is private |
 | `hashtag` | `top TAG`, `recent TAG` | |
 | `like` | `post MEDIA`, `undo MEDIA` | Needs `--enable-growth-actions` |
-| `media` | `download MEDIA [--output DIR]` | Photos, reels, carousels |
+| `media` | `download MEDIA [--output DIR]`, `likers MEDIA` | Photos, reels, carousels |
+| `profile` | `show`, `edit [--bio] [--name] [--website]`, `picture PATH\|URL` | Your own account |
+| `activity` | `activity [--limit N]` | Notifications: follows, likes, comments, mentions, tags |
 | `config` | `show`, `mode MODE`, `set KEY VAL` | Modes: `official-only`, `hybrid-safe`, `private-enabled` |
 
 `MEDIA` can be a numeric media ID, a shortcode (`DfPQchkG1tg`) or a post/reel URL. On the Graph backends, pass the Graph media ID.

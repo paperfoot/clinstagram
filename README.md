@@ -120,12 +120,28 @@ clinstagram --json post photo <path|url> --caption "..." --tags "@user"
 clinstagram --json post video <path|url> --caption "..."
 clinstagram --json post reel <path|url> --caption "..."
 clinstagram --json post carousel img1.jpg img2.jpg --caption "..."
+clinstagram --json post edit <media> --caption "Corrected caption"
+clinstagram --json post delete <media>
+```
+
+`<media>` is a numeric media ID, a shortcode or a post/reel URL.
+
+### Profile & Activity
+
+```bash
+clinstagram --json profile show
+clinstagram --json profile edit --bio "Peer-reviewed aging research, daily" --name "Aging Research News"
+clinstagram --json profile picture avatar.png
+clinstagram --json activity --limit 30          # new followers, likes, comments, mentions, tags
 ```
 
 ### Direct Messages
 
 ```bash
 clinstagram --json dm inbox --unread --limit 10
+clinstagram --json dm pending                   # message requests
+clinstagram --json dm approve <thread_id>
+clinstagram --json dm seen <thread_id>
 clinstagram --json dm thread @alice --limit 20
 clinstagram --json dm send @alice "Thanks for reaching out!"
 clinstagram --json dm send-media @alice photo.jpg
@@ -146,7 +162,9 @@ clinstagram --json story viewers <story_id>
 
 ```bash
 clinstagram --json analytics profile
-clinstagram --json analytics post <media_id>
+clinstagram --json analytics post <media>
+clinstagram --json analytics insights <media>   # reach, saves, shares (Business/Creator)
+clinstagram --json analytics account            # account insights (Business/Creator)
 clinstagram --json analytics hashtag "photography"
 ```
 
@@ -156,6 +174,8 @@ clinstagram --json analytics hashtag "photography"
 clinstagram --json comments list <media_id|shortcode|url> --limit 50
 clinstagram --json comments reply <comment_ref> "Great point!"
 clinstagram --json comments delete <comment_ref>
+clinstagram --json comments pin <comment_ref>
+clinstagram --json --enable-growth-actions comments like <comment_ref>
 ```
 
 ### Followers
@@ -163,6 +183,8 @@ clinstagram --json comments delete <comment_ref>
 ```bash
 clinstagram --json followers list --limit 100
 clinstagram --json followers following
+clinstagram --json followers list --user @competitor --limit 200
+clinstagram --json media likers <media> --limit 200
 clinstagram --json --enable-growth-actions followers follow @user
 clinstagram --json --enable-growth-actions followers unfollow @user
 ```
@@ -173,6 +195,7 @@ clinstagram --json --enable-growth-actions followers unfollow @user
 clinstagram --json user info @username
 clinstagram --json user search "alice" --limit 10
 clinstagram --json user posts @username --limit 10
+clinstagram --json user tagged @username --limit 20
 ```
 
 ### Auth & Config
@@ -201,7 +224,7 @@ clinstagram config set proxy socks5://localhost:1080
 | `--backend auto\|graph_ig\|graph_fb\|private` | Force a specific backend |
 | `--proxy <url>` | SOCKS5/HTTP proxy for private API |
 | `--dry-run` | Preview without executing |
-| `--enable-growth-actions` | Unlock follow/unfollow |
+| `--enable-growth-actions` | Unlock follow/unfollow, likes and comment likes |
 
 ## For AI Agents
 
