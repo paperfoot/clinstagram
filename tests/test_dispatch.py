@@ -478,3 +478,36 @@ class TestMockedExecution:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["data"][0]["id"] == "p2"
+
+
+class TestErrorClassification:
+    def test_instagrapi_types_through_wrapping(self):
+        from instagrapi.exceptions import ChallengeRequired, LoginRequired, PleaseWaitFewMinutes
+        from clinstagram.commands._dispatch import _classify_error
+
+        def wrapped(inner):
+            try:
+                try:
+                    raise inner
+                except Exception as e:
+                    raise RuntimeError(f"op failed: {e}")
+            except RuntimeError as outer:
+                return outer
+
+        assert _classify_error(wrapped(LoginRequired("x"))) == "auth"
+        assert _classify_error(wrapped(ChallengeRequired("x"))) == "challenge"
+        assert _classify_error(wrapped(PleaseWaitFewMinutes("x"))) == "rate"
+
+    def test_graph_codes(self):
+        from clinstagram.backends.graph import GraphAPIError
+        from clinstagram.commands._dispatch import _classify_error
+
+        assert _classify_error(GraphAPIError(400, "OAuthException", "Error validating access token", code=190)) == "auth"
+        assert _classify_error(GraphAPIError(400, "OAuthException", "Application request limit reached", code=4)) == "rate"
+
+    def test_incidental_words_are_not_misclassified(self):
+        from clinstagram.commands._dispatch import _classify_error
+
+        assert _classify_error(RuntimeError("withholding feeds from this session; log in elsewhere")) == "api"
+        assert _classify_error(RuntimeError("failed to generate thumbnail")) == "api"
+        assert _classify_error(RuntimeError("rate limit exceeded")) == "rate"

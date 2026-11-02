@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import random
 import time
 from typing import Any, Callable
@@ -23,6 +24,56 @@ from clinstagram.media import cleanup_temp_files, resolve_media
 from clinstagram.models import CLIError, CLIResponse, ExitCode
 
 console = Console()
+
+
+_RATE_TYPES = {"PleaseWaitFewMinutes", "RateLimitError", "ClientThrottledError", "FeedbackRequired"}
+_AUTH_TYPES = {
+    "LoginRequired", "ClientLoginRequired", "BadPassword", "ReloginAttemptExceeded",
+    "TwoFactorRequired", "ClientUnauthorizedError",
+}
+_GRAPH_RATE_CODES = {4, 17, 32, 613}  # app / user / page / custom rate limits
+_GRAPH_AUTH_CODES = {102, 190}  # session invalid, access token invalid or expired
+_RATE_RE = re.compile(r"rate.?limit|request limit|throttl|too many requests|please wait a few minutes|\b429\b", re.I)
+_CHALLENGE_RE = re.compile(r"challenge_required|checkpoint_required|\bchallenge\b", re.I)
+_AUTH_RE = re.compile(
+    r"login_required|not logged in|unauthori[sz]ed|\b401\b|session (?:has )?expired|"
+    r"invalid (?:access )?token|oauth",
+    re.I,
+)
+
+
+def _classify_error(exc: BaseException) -> str:
+    """Map a backend failure to rate | challenge | auth | api.
+
+    Backends wrap instagrapi errors, so walk the cause/context chain and trust
+    exception types first; message patterns are a fallback for Graph/HTTP errors.
+    """
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        name = type(cur).__name__
+        if name in _RATE_TYPES:
+            return "rate"
+        if "Challenge" in name or "Checkpoint" in name or "Captcha" in name:
+            return "challenge"
+        if name in _AUTH_TYPES:
+            return "auth"
+        if name == "GraphAPIError":
+            code = getattr(cur, "code", None)
+            if code in _GRAPH_RATE_CODES or (isinstance(code, int) and 80001 <= code <= 80014):
+                return "rate"
+            if code in _GRAPH_AUTH_CODES or getattr(cur, "status_code", None) == 401:
+                return "auth"
+        cur = cur.__cause__ or cur.__context__
+    text = str(exc)
+    if _RATE_RE.search(text):
+        return "rate"
+    if _CHALLENGE_RE.search(text):
+        return "challenge"
+    if _AUTH_RE.search(text):
+        return "auth"
+    return "api"
 
 
 def _get_secrets(ctx: typer.Context) -> SecretsStore:
@@ -331,19 +382,20 @@ def dispatch(
         ))
     except Exception as exc:
         error_str = str(exc)
-        if "rate" in error_str.lower() or "throttl" in error_str.lower():
+        kind = _classify_error(exc)
+        if kind == "rate":
             output_error(ctx, CLIError(
                 exit_code=ExitCode.RATE_LIMITED,
                 error=error_str,
                 retry_after=60,
             ))
-        elif "challenge" in error_str.lower():
+        elif kind == "challenge":
             output_error(ctx, CLIError(
                 exit_code=ExitCode.CHALLENGE_REQUIRED,
                 error=error_str,
                 challenge_type="unknown",
             ))
-        elif "login" in error_str.lower() or "auth" in error_str.lower() or "session" in error_str.lower():
+        elif kind == "auth":
             output_error(ctx, CLIError(
                 exit_code=ExitCode.AUTH_ERROR,
                 error=error_str,
