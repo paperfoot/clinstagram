@@ -20,12 +20,17 @@ class Router:
         account: str,
         compliance_mode: ComplianceMode,
         secrets: SecretsStore,
+        available: Optional[list[str]] = None,
     ):
         self.account = account
         self.compliance_mode = compliance_mode
         self.secrets = secrets
+        # Pre-resolved configured backends (from the account registry); None = ask the keychain.
+        self._available = available
 
     def _available_backends(self) -> list[str]:
+        if self._available is not None:
+            return [b for b in BACKEND_PREFERENCE if b in self._available]
         return [b for b in BACKEND_PREFERENCE if self.secrets.has_backend(self.account, b)]
 
     def _is_allowed_by_policy(self, backend: str, feature: Feature) -> bool:

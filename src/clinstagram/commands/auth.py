@@ -9,7 +9,14 @@ import typer
 
 from clinstagram.auth.keychain import SecretsStore
 from clinstagram.backends.capabilities import CAPABILITY_MATRIX
-from clinstagram.commands._dispatch import make_subgroup, output_error, output_success
+from clinstagram.commands._dispatch import (
+    configured_backends,
+    forget_account,
+    make_subgroup,
+    output_error,
+    output_success,
+    record_account,
+)
 from clinstagram.models import CLIError, ExitCode
 
 from clinstagram._console import console
@@ -30,8 +37,9 @@ def status(ctx: typer.Context):
     secrets = _get_secrets(ctx)
 
     backends = {}
+    configured = configured_backends(ctx)
     for name in ["graph_ig", "graph_fb", "private"]:
-        backends[name] = {"configured": secrets.has_backend(account, name)}
+        backends[name] = {"configured": name in configured}
 
     result = {
         "account": account,
@@ -76,6 +84,7 @@ def _store_graph_token(
         effective_token = typer.prompt(f"{label} access token", hide_input=True)
 
     secrets.set(account, token_key, effective_token)
+    record_account(ctx, account, add_backend=backend_name)
 
     if not ctx.obj["json"]:
         console.print(f"[green]Stored[/green] {label} token for [bold]{account}[/bold]")
@@ -177,6 +186,7 @@ def login(
     if result.success:
         # Store session in keychain
         secrets.set(account, "private_session", result.session_json)
+        record_account(ctx, account, username=result.username, add_backend="private")
 
         if not ctx.obj["json"]:
             label = "Re-authenticated" if result.relogin else "Logged in"
@@ -293,6 +303,7 @@ def logout(
     secrets = _get_secrets(ctx)
     for name in ["graph_ig_token", "graph_fb_token", "private_session"]:
         secrets.delete(account, name)
+    forget_account(ctx, account)
     if not ctx.obj["json"]:
         typer.echo(f"Cleared sessions for account: {account}")
         return

@@ -83,12 +83,77 @@ def _get_secrets(ctx: typer.Context) -> SecretsStore:
     return SecretsStore(backend="keyring")
 
 
+BACKEND_NAMES = ("graph_ig", "graph_fb", "private")
+
+
+def record_account(
+    ctx: typer.Context,
+    account: str,
+    *,
+    username: str | None = None,
+    add_backend: str | None = None,
+    backends: list[str] | None = None,
+) -> None:
+    """Create/update the account's registry row in config.toml."""
+    from clinstagram.config import AccountEntry, save_config
+
+    config = ctx.obj["config"]
+    entry = config.accounts.get(account) or AccountEntry()
+    if username:
+        entry.username = username
+    if backends is not None:
+        entry.backends = backends
+    if add_backend and add_backend not in entry.backends:
+        entry.backends = [b for b in BACKEND_NAMES if b in {*entry.backends, add_backend}]
+    config.accounts[account] = entry
+    save_config(config, ctx.obj.get("config_dir"))
+    ctx.obj.pop("_configured", None)
+
+
+def forget_account(ctx: typer.Context, account: str) -> None:
+    from clinstagram.config import save_config
+
+    config = ctx.obj["config"]
+    if config.accounts.pop(account, None) is not None:
+        save_config(config, ctx.obj.get("config_dir"))
+    ctx.obj.pop("_configured", None)
+
+
+def probe_backends(ctx: typer.Context, account: str) -> list[str]:
+    """Ask the keychain which backends have credentials (slow: one read each)."""
+    secrets = _get_secrets(ctx)
+    return [b for b in BACKEND_NAMES if secrets.has_backend(account, b)]
+
+
+def configured_backends(ctx: typer.Context) -> list[str]:
+    """Backends with stored credentials for the current account.
+
+    Read from the account registry so routing doesn't open the keychain three
+    times per command; an account the registry doesn't know yet is probed once
+    and recorded.
+    """
+    cached = ctx.obj.get("_configured")
+    if cached is not None:
+        return cached
+    account = ctx.obj["account"]
+    entry = ctx.obj["config"].accounts.get(account)
+    if entry is not None and entry.backends:
+        found = list(entry.backends)
+    else:
+        found = probe_backends(ctx, account)
+        if found:
+            record_account(ctx, account, backends=found)
+    ctx.obj["_configured"] = found
+    return found
+
+
 def _get_router(ctx: typer.Context) -> Router:
     config = ctx.obj["config"]
     return Router(
         account=ctx.obj["account"],
         compliance_mode=config.compliance_mode,
         secrets=_get_secrets(ctx),
+        available=configured_backends(ctx),
     )
 
 
@@ -246,10 +311,7 @@ def _backend_remediation(backend_name: str) -> str:
 
 
 def _backend_is_configured(ctx: typer.Context, backend_name: str) -> bool:
-    token_key = BACKEND_TOKEN_MAP.get(backend_name)
-    if not token_key:
-        return False
-    return _get_secrets(ctx).get(ctx.obj["account"], token_key) is not None
+    return backend_name in configured_backends(ctx)
 
 
 def can_use_backend(ctx: typer.Context, feature: Feature, backend_name: str) -> bool:

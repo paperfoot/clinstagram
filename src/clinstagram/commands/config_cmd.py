@@ -26,6 +26,9 @@ def show(ctx: typer.Context):
     # Redact proxy credentials in output
     if "proxy" in data and data["proxy"]:
         data["proxy"] = _redact_proxy(data["proxy"])
+    for entry in (data.get("accounts") or {}).values():
+        if entry.get("proxy"):
+            entry["proxy"] = _redact_proxy(entry["proxy"])
     if not ctx.obj["json"]:
         for key, val in data.items():
             typer.echo(f"  {key}: {val}")

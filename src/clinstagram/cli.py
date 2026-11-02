@@ -34,7 +34,10 @@ def _resolve_config_dir() -> Optional[Path]:
 def main(
     ctx: typer.Context,
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (place before subcommand)"),
-    account: str = typer.Option("default", "--account", help="Account name"),
+    account: Optional[str] = typer.Option(
+        None, "--account", envvar="CLINSTAGRAM_ACCOUNT",
+        help="Account name (default: config default_account; env CLINSTAGRAM_ACCOUNT)",
+    ),
     backend: BackendType = typer.Option(BackendType.AUTO, "--backend", help="Force backend"),
     proxy: Optional[str] = typer.Option(None, "--proxy", help="Proxy URL for private API"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen"),
@@ -50,10 +53,13 @@ def main(
         json_output = True
     ctx.ensure_object(dict)
     ctx.obj["json"] = json_output
-    ctx.obj["account"] = account
     ctx.obj["backend"] = backend
     config = load_config(config_dir)
-    ctx.obj["proxy"] = proxy or config.proxy
+    account = account or config.default_account
+    ctx.obj["account"] = account
+    entry = config.accounts.get(account)
+    # --proxy beats the account's own proxy, which beats the global one.
+    ctx.obj["proxy"] = proxy or (entry.proxy if entry else None) or config.proxy
     ctx.obj["dry_run"] = dry_run
     ctx.obj["enable_growth"] = enable_growth
     ctx.obj["config_dir"] = config_dir
@@ -80,7 +86,10 @@ def agent_info():
         "commands": {},
         "global_flags": {
             "--json": {"description": "Output as JSON (place before subcommand)", "type": "boolean"},
-            "--account": {"description": "Account name", "type": "string", "default": "default"},
+            "--account": {
+                "description": "Account to act as (default: config default_account; env CLINSTAGRAM_ACCOUNT). See `account list`.",
+                "type": "string",
+            },
             "--backend": {
                 "description": "Force backend",
                 "type": "string",
@@ -337,6 +346,7 @@ def _group_loaders() -> dict:
     """name -> import path of each command group (imported only when registered)."""
     return {
         "auth": ("clinstagram.commands.auth", "auth_app"),
+        "account": ("clinstagram.commands.account_cmd", "account_app"),
         "config": ("clinstagram.commands.config_cmd", "config_app"),
         "profile": ("clinstagram.commands.profile", "profile_app"),
         "post": ("clinstagram.commands.post", "post_app"),

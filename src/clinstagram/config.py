@@ -100,6 +100,31 @@ class MediaStaging(_Model):
     cleanup_after_publish: bool = True
 
 
+@dataclass
+class AccountEntry(_Model):
+    """Registry row for a stored account. The keychain can't list its entries, so
+    this is how `account list` (and fast routing) know what exists."""
+
+    username: Optional[str] = None
+    proxy: Optional[str] = None
+    backends: list = field(default_factory=list)  # configured backends, e.g. ["private"]
+
+    def _coerce(self, name: str, value: Any) -> Any:
+        if name == "proxy":
+            return _normalize_proxy(value)
+        if name == "backends":
+            return [str(b) for b in (value or [])]
+        return value
+
+
+def _normalize_proxy(value: Any) -> Optional[str]:
+    if value is None or (isinstance(value, str) and value.strip().lower() in ("", "none")):
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"proxy must be a string, got {value!r}")
+    return value.strip()
+
+
 # Keys that `config set` is allowed to modify directly.
 WRITABLE_CONFIG_KEYS = frozenset({
     "default_account", "compliance_mode", "preferred_backend", "proxy",
@@ -114,6 +139,7 @@ class GlobalConfig(_Model):
     proxy: Optional[str] = None
     rate_limits: RateLimits = field(default_factory=RateLimits)
     media_staging: MediaStaging = field(default_factory=MediaStaging)
+    accounts: dict = field(default_factory=dict)  # name -> AccountEntry
 
     def _coerce(self, name: str, value: Any) -> Any:
         if name == "compliance_mode":
@@ -125,11 +151,12 @@ class GlobalConfig(_Model):
                 raise ValueError("default_account must be a non-empty string")
             return value.strip()
         if name == "proxy":
-            if value is None or (isinstance(value, str) and value.strip().lower() in ("", "none")):
-                return None
-            if not isinstance(value, str):
-                raise ValueError(f"proxy must be a string, got {value!r}")
-            return value.strip()
+            return _normalize_proxy(value)
+        if name == "accounts" and isinstance(value, dict):
+            return {
+                str(k): (v if isinstance(v, AccountEntry) else AccountEntry.from_dict(v))
+                for k, v in value.items()
+            }
         if name == "rate_limits" and isinstance(value, dict):
             return RateLimits.from_dict(value)
         if name == "media_staging" and isinstance(value, dict):
