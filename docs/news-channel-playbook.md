@@ -8,8 +8,10 @@ How an agent runs an Instagram channel for a niche news site (built around Aging
 clinstagram auth login -u <channel_account>
 clinstagram config mode private-enabled        # writes (posting, DMs, replies) need it
 clinstagram --json profile edit --username agingresearch.news --name "AgingResearch.News" \
-  --bio "The world's aging research, the minute it lands. Every journal, every language, in plain words.
-Follow any topic free at agingresearch.news"
+  --bio "🧬 Aging research, the minute it lands
+📚 Every journal, every language
+💬 In plain words
+👇 Follow any topic, free"
 clinstagram --json profile picture app-icon-1080.jpg   # the site's mark: white A, teal bar, #1f1f1f
 clinstagram --json profile convert --to creator         # unlocks insights
 clinstagram --json profile show                # confirm
@@ -32,7 +34,58 @@ Run the channel from an account Instagram already trusts. A brand-new account wi
 | Every 2–3 h | Clear message requests and reply | `clinstagram --json dm pending` · `dm approve <thread>` · `dm thread <thread>` · `dm send <thread> "..."` · `dm seen <thread>` |
 | Evening | Score the day's posts | `clinstagram --json analytics insights <post>` · `analytics account` |
 
-Captions follow the `gos-news-media` content spec: the answer in the first line, the organism and sample size stated ("in mice", "n=18, not yet replicated"), the paper's DOI in the caption, and one ask at the end: "Follow <subject> on AgingResearch.News, link in bio." One ask per post, never a menu.
+## How to write for Instagram
+
+People on Instagram scroll; they don't read. A post has about two seconds to earn the tap. These rules come from how the accounts that already own this audience post (studied live on 2 Nov 2026: ScienceAlert 903K, New Scientist 1.57M, IFLScience 703K, Science 593K, lifespan.io 18K, Longevity.Technology 39K, FoundMyFitness 1.2M, Huberman 8.1M, Attia 1.57M, Sinclair 903K).
+
+**The caption shape**
+
+1. **Hook line.** One emoji, then the finding as a claim with a number, or a question. Never the paper's title. FoundMyFitness: "Wall sits lowered blood pressure by almost 10 points in just four weeks."
+2. **Three short blocks**, a blank line between each, two sentences at most:
+   - 🔬 what they found, in words a 14-year-old would follow
+   - 👥 or 🐭 who was studied: people or mice, how many, what kind of study
+   - ⚠️ the catch: not replicated, mice only, association not cause
+3. **One ask.** Either "👉 Follow <topic> free, link in bio" or the comment-to-DM ask (below). Never both.
+4. **Three to five hashtags** at the very end, or none. The accounts that grow use few.
+
+Emojis are signposts, not decoration: one per line at most, and the same emoji always means the same thing (🔬 finding, 🐭 mice, 👥 people, ⚠️ catch, 📄 paper). No jargon in the hook; save "senolytic" for the second block and explain it there.
+
+**Worked example** (the site's top story on 2 Nov 2026):
+
+```
+👁️ A photo of your eye may show how fast you're aging.
+
+🔬 An AI read retinal photos and estimated each person's lifespan path. Its estimates matched who actually died, and when.
+
+👥 Trained on a European group, then tested on three more. An observational cohort, so it shows risk, not cause.
+
+⚠️ It's a research model, not a test your optician can run yet.
+
+💬 Comment EYE and we'll DM you the paper in plain words.
+
+#longevity #aging #agingresearch
+```
+
+**Comment-to-DM: the growth loop.** Huberman's "Comment SUBLIME & I'll DM you a link" is the strongest move on the platform: every comment lifts the post in the feed, and every DM opens a private line to a reader. clinstagram runs it end to end:
+
+```bash
+clinstagram --json comments list <post> --limit 100          # find comments containing the keyword
+clinstagram --json dm send @<commenter> "Here's the paper in plain words 👇 https://agingresearch.news/s/...?utm_source=instagram&utm_medium=dm — tap Follow on the page to get the next one free."
+clinstagram --json comments reply <comment_ref> "Sent! 📩"
+```
+
+Answer each one within the hour, and keep to the DM caps in `config.toml` (`private_dm_per_hour = 30`). Instagram watches DM bursts more closely than anything else.
+
+**Formats, in order of reach**
+
+| Format | Use it for | Shape |
+|---|---|---|
+| Reel, 15–40 s | The day's most surprising finding | Hook stat on screen in the first second, the figure from the paper, the catch, the ask |
+| Carousel, 4–7 slides | The lead story | 1 hook · 2 finding · 3 who was studied · 4 the catch · 5 what it means · 6 the ask |
+| Weekly roundup carousel | Fridays: "This week in aging 🧬" | One slide per story, an emoji tag on each, as ScienceAlert does (💊 drugs, 🧠 brain, 🫀 heart, 🐭 mice) |
+| Story with link sticker | Every post, the same day | The hook plus the sticker to the story page |
+
+Keep to the house style on every slide: white sans text on #1f1f1f with the teal bar as the accent, as on agingresearch.news.
 
 ## Prospecting: the covered-author play on Instagram
 
