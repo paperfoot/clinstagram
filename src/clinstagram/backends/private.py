@@ -530,9 +530,22 @@ class PrivateBackend(Backend):
         try:
             user_id = self._user_id_from_username(username)
             medias = self._cl.user_medias(int(user_id), amount=limit)
-            return [_media_to_dict(m) for m in medias]
         except Exception as exc:
             raise _wrap_error("user_posts", exc)
+        if not medias and limit > 0:
+            # Instagram sometimes answers "ok" with an empty profile feed for a
+            # profile that has posts — it withholds grids from sessions it
+            # suspects of automation. An empty list would read as "no posts".
+            info = self._user_cache.get(username, (None, None))[1]
+            expected = getattr(info, "media_count", 0) or 0
+            if expected > 0:
+                raise PrivateAPIError(
+                    f"user_posts failed: Instagram returned 0 of {expected} posts for "
+                    f"@{username}. It is withholding profile feeds from this session "
+                    "(common for new or automation-flagged accounts). Use the Graph "
+                    "backend (--backend graph_ig) or log in with an established account."
+                )
+        return [_media_to_dict(m) for m in medias]
 
     # ------------------------------------------------------------------
     # Engagement

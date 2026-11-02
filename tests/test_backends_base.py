@@ -311,3 +311,21 @@ class TestPrivateBackendMediaRefResolution:
         result = backend.like_post("https://www.instagram.com/reel/DfPQchkG1tg/")
         cl.media_like.assert_called_once_with("4021505321193921376")
         assert result["media_id"] == "4021505321193921376"
+
+
+class TestPrivateBackendUserPostsWithheld:
+    def _backend(self, media_count):
+        cl = MagicMock()
+        info = MagicMock(); info.pk = 42; info.media_count = media_count
+        cl.user_info_by_username.return_value = info
+        cl.user_medias.return_value = []
+        return PrivateBackend(client=cl)
+
+    def test_empty_feed_for_profile_with_posts_raises(self):
+        import pytest
+        from clinstagram.backends.private import PrivateAPIError
+        with pytest.raises(PrivateAPIError, match="0 of 20 posts"):
+            self._backend(20).user_posts("nasa", limit=3)
+
+    def test_empty_feed_for_profile_without_posts_is_empty(self):
+        assert self._backend(0).user_posts("newbie", limit=3) == []
