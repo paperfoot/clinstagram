@@ -1,8 +1,10 @@
 """Shared dispatch logic — routes a Feature to a backend, calls the action, outputs the result."""
 from __future__ import annotations
 
+import contextlib
 import json
 import re
+import sys
 import random
 import time
 from typing import Any, Callable
@@ -382,7 +384,10 @@ def dispatch(
         _apply_jitter_delay(ctx, feature)
         # Store backend_name in context for stage() calls in action lambdas
         ctx.obj["_backend_name"] = backend_name
-        result = action(backend)
+        # instagrapi print()s progress ("Analyzing CLIP file ...") to stdout,
+        # which would corrupt the JSON envelope agents parse. Send it to stderr.
+        with contextlib.redirect_stdout(sys.stderr):
+            result = action(backend)
         output_success(ctx, result, backend_used=backend_name)
     except NotImplementedError as exc:
         output_error(ctx, CLIError(

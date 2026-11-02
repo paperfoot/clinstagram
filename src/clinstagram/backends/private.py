@@ -1,11 +1,79 @@
 from __future__ import annotations
 
+import contextlib
 import re
-
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator, Optional
 
 from clinstagram.backends.base import Backend
+
+_VIDEO_SUFFIXES = (".mp4", ".mov", ".m4v", ".avi")
+
+
+def ffmpeg_thumbnail(video: Path, out: Path) -> Path:
+    """Write a JPEG frame of `video` to `out` with ffmpeg.
+
+    instagrapi 3 only builds thumbnails through MoviePy, which is not a
+    dependency; ffmpeg is the documented requirement for video posting.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError(
+            "Video upload needs a thumbnail and ffmpeg was not found on PATH. "
+            "Install ffmpeg (macOS: brew install ffmpeg; Debian/Ubuntu: apt install ffmpeg) "
+            "or pass --thumbnail IMAGE."
+        )
+    # A frame ~1 s in avoids black fade-ins; fall back to the first frame for short clips.
+    for seek in ("1", "0"):
+        subprocess.run(
+            [ffmpeg, "-y", "-loglevel", "error", "-ss", seek, "-i", str(video),
+             "-frames:v", "1", "-q:v", "2", str(out)],
+            capture_output=True, timeout=120, check=False,
+        )
+        if out.exists() and out.stat().st_size > 0:
+            return out
+    raise RuntimeError(f"ffmpeg could not extract a thumbnail frame from {video}")
+
+
+@contextlib.contextmanager
+def _video_thumbnail(video: Path, given: str = "") -> Iterator[Path]:
+    """Yield the caller's thumbnail, or a temp ffmpeg frame that is removed afterwards."""
+    if given:
+        yield Path(given)
+        return
+    fd, name = tempfile.mkstemp(prefix="clinstagram-thumb-", suffix=".jpg")
+    import os
+
+    os.close(fd)
+    tmp = Path(name)
+    tmp.unlink()  # ffmpeg writes it; an empty placeholder would look like success
+    try:
+        yield ffmpeg_thumbnail(video, tmp)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _install_ffmpeg_thumbnailer() -> None:
+    """Route instagrapi's internal thumbnailing (e.g. carousel videos, which take no
+    thumbnail argument) through ffmpeg instead of MoviePy."""
+    try:
+        import instagrapi.utils.video as igvideo
+    except Exception:  # pragma: no cover - instagrapi layout changed
+        return
+    current = getattr(igvideo, "generate_video_thumbnail", None)
+    if current is None or getattr(current, "_clinstagram", False):
+        return
+
+    def generate_video_thumbnail(path, thumbnail, duration=None, crop_thumbnail=None):
+        ffmpeg_thumbnail(Path(path), Path(thumbnail))
+        if crop_thumbnail:
+            crop_thumbnail(Path(thumbnail))
+
+    generate_video_thumbnail._clinstagram = True  # type: ignore[attr-defined]
+    igvideo.generate_video_thumbnail = generate_video_thumbnail
 
 
 class PrivateAPIError(Exception):
@@ -251,6 +319,7 @@ class PrivateBackend(Backend):
             An already-authenticated instagrapi Client instance.
         """
         self._cl = client
+        _install_ffmpeg_thumbnailer()
         # In-memory cache: username → (user_pk_str, user_object)
         # Eliminates redundant user_info_by_username API calls within a session.
         self._user_cache: dict[str, tuple[str, Any]] = {}
@@ -318,10 +387,8 @@ class PrivateBackend(Backend):
         self, media: str, caption: str = "", thumbnail: str = "", location: str = ""
     ) -> dict:
         try:
-            kwargs: dict[str, Any] = {"path": Path(media), "caption": caption}
-            if thumbnail:
-                kwargs["thumbnail"] = Path(thumbnail)
-            result = self._cl.video_upload(**kwargs)
+            with _video_thumbnail(Path(media), thumbnail) as thumb:
+                result = self._cl.video_upload(path=Path(media), caption=caption, thumbnail=thumb)
             return _media_to_dict(result)
         except Exception as exc:
             raise _wrap_error("post_video", exc)
@@ -330,10 +397,8 @@ class PrivateBackend(Backend):
         self, media: str, caption: str = "", thumbnail: str = "", audio: str = ""
     ) -> dict:
         try:
-            kwargs: dict[str, Any] = {"path": Path(media), "caption": caption}
-            if thumbnail:
-                kwargs["thumbnail"] = Path(thumbnail)
-            result = self._cl.clip_upload(**kwargs)
+            with _video_thumbnail(Path(media), thumbnail) as thumb:
+                result = self._cl.clip_upload(path=Path(media), caption=caption, thumbnail=thumb)
             return _media_to_dict(result)
         except Exception as exc:
             raise _wrap_error("post_reel", exc)
@@ -341,7 +406,14 @@ class PrivateBackend(Backend):
     def post_carousel(self, media_list: list[str], caption: str = "") -> dict:
         try:
             paths = [Path(m) for m in media_list]
-            result = self._cl.album_upload(paths, caption=caption)
+            # instagrapi drops "<video>.jpg" thumbnails next to carousel videos; remove the ones we caused.
+            litter = [Path(f"{p}.jpg") for p in paths if p.suffix.lower() in _VIDEO_SUFFIXES]
+            litter = [t for t in litter if not t.exists()]
+            try:
+                result = self._cl.album_upload(paths, caption=caption)
+            finally:
+                for t in litter:
+                    t.unlink(missing_ok=True)
             return _media_to_dict(result)
         except Exception as exc:
             raise _wrap_error("post_carousel", exc)
@@ -390,7 +462,7 @@ class PrivateBackend(Backend):
                 kwargs["user_ids"] = [int(self._user_id_from_username(user))]
             path = Path(media)
             suffix = path.suffix.lower()
-            if suffix in (".mp4", ".mov", ".avi"):
+            if suffix in _VIDEO_SUFFIXES:
                 result = self._cl.direct_send_video(path, **kwargs)
             else:
                 result = self._cl.direct_send_photo(path, **kwargs)
@@ -463,7 +535,8 @@ class PrivateBackend(Backend):
                 from instagrapi.types import StoryLink
 
                 kwargs["links"] = [StoryLink(webUri=link)]
-            result = self._cl.video_upload_to_story(**kwargs)
+            with _video_thumbnail(Path(media)) as thumb:
+                result = self._cl.video_upload_to_story(thumbnail=thumb, **kwargs)
             return _story_to_dict(result)
         except PrivateAPIError:
             raise

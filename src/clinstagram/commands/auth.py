@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import json
+import sys
 from typing import Optional
 
 import typer
@@ -149,7 +151,8 @@ def login(
         delay_range=[delay_min, delay_max],
     )
 
-    result = login_private(config, existing_session=existing_session)
+    with contextlib.redirect_stdout(sys.stderr):  # keep instagrapi prints out of JSON stdout
+        result = login_private(config, existing_session=existing_session)
 
     # If session expired and no password was provided, prompt and retry
     if not result.success and "no password provided" in (result.error or "").lower() and not effective_password:
@@ -168,7 +171,8 @@ def login(
                 timezone=timezone,
                 delay_range=[delay_min, delay_max],
             )
-            result = login_private(config, existing_session=existing_session)
+            with contextlib.redirect_stdout(sys.stderr):  # keep instagrapi prints out of JSON stdout
+                result = login_private(config, existing_session=existing_session)
 
     if result.success:
         # Store session in keychain
