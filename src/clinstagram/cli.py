@@ -169,27 +169,31 @@ def agent_info():
         },
     }
 
-    # Introspect commands — walk the Typer app and extract click.Command params
-    import click
+    # Introspect commands — walk the Typer app and extract click-style params.
+    # Duck-typed on purpose: Typer >= 0.25 vendors click as typer._click and no
+    # longer installs `click`, so isinstance checks against click classes break.
 
-    def _param_kind(param: "click.Parameter") -> str:
-        return "positional" if isinstance(param, click.Argument) else "option"
+    def _is_choice(t: Any) -> bool:
+        return isinstance(getattr(t, "choices", None), (list, tuple))
 
-    def _param_type_name(param: "click.Parameter") -> str:
+    def _param_kind(param: Any) -> str:
+        return "positional" if getattr(param, "param_type_name", "") == "argument" else "option"
+
+    def _param_type_name(param: Any) -> str:
         t = param.type
-        if isinstance(t, click.Choice):
+        if _is_choice(t):
             return "choice"
         name = getattr(t, "name", None) or type(t).__name__.lower()
         return {"int": "integer", "string": "string", "bool": "boolean", "float": "number"}.get(name, name)
 
-    def _param_to_dict(param: "click.Parameter") -> dict:
+    def _param_to_dict(param: Any) -> dict:
         d: dict[str, Any] = {
             "name": (param.opts[0] if param.opts else param.name),
             "kind": _param_kind(param),
             "type": _param_type_name(param),
             "required": bool(param.required),
         }
-        if isinstance(param.type, click.Choice):
+        if _is_choice(param.type):
             d["values"] = list(param.type.choices)
         default = param.default
         if default is not None and default is not False:
