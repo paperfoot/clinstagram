@@ -7,9 +7,11 @@ How an agent runs an Instagram channel for a niche news site (built around Aging
 ```bash
 clinstagram auth login -u <channel_account>
 clinstagram config mode private-enabled        # writes (posting, DMs, replies) need it
-clinstagram --json profile edit --name "Aging Research News" \
-  --bio "Peer-reviewed aging research, every day. Follow a subject ↓"
-clinstagram --json profile picture assets/arn-avatar.png
+clinstagram --json profile edit --username agingresearch.news --name "AgingResearch.News" \
+  --bio "The world's aging research, the minute it lands. Every journal, every language, in plain words.
+Follow any topic free at agingresearch.news"
+clinstagram --json profile picture app-icon-1080.jpg   # the site's mark: white A, teal bar, #1f1f1f
+clinstagram --json profile convert --to creator         # unlocks insights
 clinstagram --json profile show                # confirm
 ```
 
