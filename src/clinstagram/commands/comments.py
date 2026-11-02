@@ -11,7 +11,7 @@ comments_app = make_subgroup("Manage comments")
 @comments_app.command("list")
 def list_comments(
     ctx: typer.Context,
-    media_id: str = typer.Argument(..., help="Media ID"),
+    media_id: str = typer.Argument(..., help="Media ID, shortcode, or post URL"),
     limit: int = typer.Option(50, "--limit", "-n", help="Max comments to return"),
 ):
     """List comments on a post."""
@@ -38,7 +38,7 @@ def reply(
 @comments_app.command("add")
 def add(
     ctx: typer.Context,
-    media_id: str = typer.Argument(..., help="Media ID to comment on"),
+    media_id: str = typer.Argument(..., help="Media ID, shortcode, or post URL to comment on"),
     text: str = typer.Argument(..., help="Comment text"),
 ):
     """Comment on a post. Requires --enable-growth-actions."""

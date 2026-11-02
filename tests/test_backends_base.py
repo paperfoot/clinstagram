@@ -173,15 +173,15 @@ class TestPrivateBackendLikePost:
     def test_like_post_calls_media_like(self):
         mock_client = MagicMock()
         backend = PrivateBackend(client=mock_client)
-        result = backend.like_post("media123")
-        mock_client.media_like.assert_called_once_with("media123")
+        result = backend.like_post("3141592653")
+        mock_client.media_like.assert_called_once_with("3141592653")
         assert result["status"] == "liked"
 
     def test_unlike_post_calls_media_unlike(self):
         mock_client = MagicMock()
         backend = PrivateBackend(client=mock_client)
-        result = backend.unlike_post("media123")
-        mock_client.media_unlike.assert_called_once_with("media123")
+        result = backend.unlike_post("3141592653")
+        mock_client.media_unlike.assert_called_once_with("3141592653")
         assert result["status"] == "unliked"
 
 
@@ -195,8 +195,8 @@ class TestPrivateBackendCommentsAdd:
         comment.created_at_utc = None
         mock_client.media_comment.return_value = comment
         backend = PrivateBackend(client=mock_client)
-        result = backend.comments_add("media123", "great post")
-        mock_client.media_comment.assert_called_once_with("media123", "great post")
+        result = backend.comments_add("3141592653", "great post")
+        mock_client.media_comment.assert_called_once_with("3141592653", "great post")
         assert result["text"] == "great post"
 
 
@@ -211,11 +211,11 @@ class TestPrivateBackendCommentsList:
         mock_client.media_comments.return_value = [comment]
         
         backend = PrivateBackend(client=mock_client)
-        result = backend.comments_list("media999", limit=10)
+        result = backend.comments_list("2718281828", limit=10)
         
-        mock_client.media_comments.assert_called_once_with("media999", amount=10)
+        mock_client.media_comments.assert_called_once_with("2718281828", amount=10)
         assert len(result) == 1
-        assert result[0]["id"] == "media999:123"
+        assert result[0]["id"] == "2718281828:123"
 
 
 class TestPrivateBackendCommentsReply:
@@ -229,10 +229,10 @@ class TestPrivateBackendCommentsReply:
         mock_client.media_comment.return_value = comment
 
         backend = PrivateBackend(client=mock_client)
-        result = backend.comments_reply("media999:123", "reply text")
+        result = backend.comments_reply("2718281828:123", "reply text")
 
         mock_client.media_comment.assert_called_once_with(
-            "media999", "reply text", replied_to_comment_id=123
+            "2718281828", "reply text", replied_to_comment_id=123
         )
         assert result["text"] == "reply text"
 
@@ -269,3 +269,45 @@ class TestBackendCannotBeInstantiated:
     def test_abstract_class_raises(self):
         with pytest.raises(TypeError):
             Backend()  # type: ignore[abstract]
+
+
+class TestPrivateBackendMediaRefResolution:
+    """Commands accept numeric ids, "pk_userid" ids, shortcodes, and post URLs."""
+
+    def _backend(self):
+        mock_client = MagicMock()
+        mock_client.media_pk_from_code.return_value = 4021505321193921376
+        mock_client.media_pk_from_url.return_value = 4021505321193921376
+        return PrivateBackend(client=mock_client), mock_client
+
+    def test_numeric_id_passes_through(self):
+        backend, cl = self._backend()
+        assert backend._media_pk("3141592653") == "3141592653"
+        cl.media_pk_from_code.assert_not_called()
+
+    def test_composite_id_keeps_pk(self):
+        backend, _ = self._backend()
+        assert backend._media_pk("3141592653_25025320") == "3141592653"
+
+    def test_shortcode_decoded(self):
+        backend, cl = self._backend()
+        assert backend._media_pk("DfPQchkG1tg") == "4021505321193921376"
+        cl.media_pk_from_code.assert_called_once_with("DfPQchkG1tg")
+
+    def test_url_decoded(self):
+        backend, cl = self._backend()
+        url = "https://www.instagram.com/p/DfPQchkG1tg/"
+        assert backend._media_pk(url) == "4021505321193921376"
+        cl.media_pk_from_url.assert_called_once_with(url)
+
+    def test_comments_list_accepts_shortcode(self):
+        backend, cl = self._backend()
+        cl.media_comments.return_value = []
+        backend.comments_list("DfPQchkG1tg", limit=5)
+        cl.media_comments.assert_called_once_with("4021505321193921376", amount=5)
+
+    def test_like_accepts_url(self):
+        backend, cl = self._backend()
+        result = backend.like_post("https://www.instagram.com/reel/DfPQchkG1tg/")
+        cl.media_like.assert_called_once_with("4021505321193921376")
+        assert result["media_id"] == "4021505321193921376"

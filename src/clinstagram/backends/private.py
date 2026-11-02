@@ -188,6 +188,19 @@ class PrivateBackend(Backend):
         except Exception as exc:
             raise _wrap_error("user_id_from_username", exc)
 
+    def _media_pk(self, media_ref: str) -> str:
+        """Resolve a media id, "pk_userid" id, shortcode, or instagram.com URL to a pk.
+
+        Shortcode and URL decoding is local (no network call).
+        """
+        ref = media_ref.strip()
+        if ref.startswith(("http://", "https://")):
+            return str(self._cl.media_pk_from_url(ref))
+        head = ref.split("_", 1)[0]
+        if head.isdigit():
+            return head
+        return str(self._cl.media_pk_from_code(ref))
+
     def _cached_user_info(self, username: str) -> Any:
         """Get user info object, using cache to avoid redundant API calls."""
         cached = self._user_cache.get(username)
@@ -383,6 +396,7 @@ class PrivateBackend(Backend):
 
     def comments_list(self, media_id: str, limit: int = 50) -> list[dict]:
         try:
+            media_id = self._media_pk(media_id)
             comments = self._cl.media_comments(media_id, amount=limit)
             return [_comment_to_dict(c, media_id) for c in comments]
         except Exception as exc:
@@ -439,7 +453,7 @@ class PrivateBackend(Backend):
                 if not medias:
                     raise ValueError("No posts found for the current account")
                 media_id = str(medias[0].pk)
-            info = self._cl.media_info(media_id)
+            info = self._cl.media_info(self._media_pk(media_id))
             return _media_to_dict(info)
         except Exception as exc:
             raise _wrap_error("analytics_post", exc)
@@ -526,6 +540,7 @@ class PrivateBackend(Backend):
 
     def like_post(self, media_id: str) -> dict:
         try:
+            media_id = self._media_pk(media_id)
             self._cl.media_like(media_id)
             return {"media_id": media_id, "status": "liked"}
         except Exception as exc:
@@ -533,6 +548,7 @@ class PrivateBackend(Backend):
 
     def unlike_post(self, media_id: str) -> dict:
         try:
+            media_id = self._media_pk(media_id)
             self._cl.media_unlike(media_id)
             return {"media_id": media_id, "status": "unliked"}
         except Exception as exc:
@@ -540,6 +556,7 @@ class PrivateBackend(Backend):
 
     def comments_add(self, media_id: str, text: str) -> dict:
         try:
+            media_id = self._media_pk(media_id)
             result = self._cl.media_comment(media_id, text)
             return _comment_to_dict(result, media_id)
         except Exception as exc:
@@ -572,14 +589,7 @@ class PrivateBackend(Backend):
         from pathlib import Path
 
         try:
-            # Resolve ref → media_pk
-            if media_ref.startswith("http://") or media_ref.startswith("https://"):
-                media_pk = int(self._cl.media_pk_from_url(media_ref))
-            elif media_ref.isdigit():
-                media_pk = int(media_ref)
-            else:
-                # Assume shortcode
-                media_pk = int(self._cl.media_pk_from_code(media_ref))
+            media_pk = int(self._media_pk(media_ref))
 
             folder = Path(output_dir) if output_dir else Path.cwd()
             folder.mkdir(parents=True, exist_ok=True)

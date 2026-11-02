@@ -17,7 +17,7 @@ def profile(ctx: typer.Context):
 @analytics_app.command("post")
 def post(
     ctx: typer.Context,
-    media_id: str = typer.Argument(..., help="Media ID or 'latest'"),
+    media_id: str = typer.Argument(..., help="Media ID, shortcode, post URL, or 'latest'"),
 ):
     """Show analytics for a specific post."""
     dispatch(ctx, Feature.ANALYTICS_POST, lambda b: b.analytics_post(media_id))

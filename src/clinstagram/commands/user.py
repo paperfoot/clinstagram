@@ -21,9 +21,10 @@ def info(
 def search(
     ctx: typer.Context,
     query: str = typer.Argument(..., help="Search query"),
+    limit: int = typer.Option(20, "--limit", help="Maximum number of users to return"),
 ):
     """Search for users by name or username."""
-    dispatch(ctx, Feature.USER_SEARCH, lambda b: b.user_search(query))
+    dispatch(ctx, Feature.USER_SEARCH, lambda b: b.user_search(query)[:limit])
 
 
 @user_app.command("posts")

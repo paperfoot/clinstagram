@@ -374,6 +374,17 @@ class TestMockedExecution:
         data = json.loads(result.output)
         assert data["data"][0]["text"] == "great!"
 
+    def test_user_search_respects_limit(self, monkeypatch, tmp_path):
+        users = [{"username": f"u{i}"} for i in range(5)]
+        self._mock_dispatch(monkeypatch, users)
+        result = runner.invoke(
+            app, ["--json", "user", "search", "longevity", "--limit", "2"],
+            env={"CLINSTAGRAM_CONFIG_DIR": str(tmp_path), "CLINSTAGRAM_TEST_MODE": "1"},
+        )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert [u["username"] for u in data["data"]] == ["u0", "u1"]
+
     def test_followers_list_success(self, monkeypatch, tmp_path):
         followers = [{"username": "fan1"}, {"username": "fan2"}]
         self._mock_dispatch(monkeypatch, followers)
