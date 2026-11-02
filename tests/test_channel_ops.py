@@ -95,6 +95,9 @@ class TestPrivateProfile:
     def test_edit_sends_only_given_fields(self):
         b, cl = _private()
         cl.account_edit.return_value = _account(biography="new")
+        applied = _account(biography="new")
+        applied.external_url = "https://n.test"
+        cl.account_info.return_value = applied  # re-read confirms the website stuck
         out = b.profile_edit(bio="new", website="https://n.test")
         cl.account_edit.assert_called_once_with(biography="new", external_url="https://n.test")
         assert out["updated"] == ["biography", "external_url"]

@@ -139,6 +139,15 @@ class Backend(ABC):
     def profile_picture(self, media: str) -> dict:
         self._unsupported("profile picture")
 
+    def profile_picture_remove(self) -> dict:
+        self._unsupported("profile picture --remove")
+
+    def profile_convert(self, to: str, category_id: str | None = None) -> dict:
+        self._unsupported("profile convert")
+
+    def story_delete(self, story_id: str) -> dict:
+        self._unsupported("story delete")
+
     def post_delete(self, media_ref: str) -> dict:
         self._unsupported("post delete")
 

@@ -25,6 +25,7 @@ class Feature(str, Enum):
     STORY_POST = "story_post"
     STORY_VIEW_OTHERS = "story_view_others"
     STORY_VIEWERS = "story_viewers"
+    STORY_DELETE = "story_delete"
     # Comments
     COMMENTS_LIST = "comments_list"
     COMMENTS_REPLY = "comments_reply"
@@ -56,6 +57,7 @@ class Feature(str, Enum):
     PROFILE_SHOW = "profile_show"
     PROFILE_EDIT = "profile_edit"
     PROFILE_PICTURE = "profile_picture"
+    PROFILE_CONVERT = "profile_convert"
     # Post management
     POST_DELETE = "post_delete"
     POST_EDIT = "post_edit"

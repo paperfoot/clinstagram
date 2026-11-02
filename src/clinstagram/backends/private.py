@@ -273,6 +273,14 @@ def _activity_to_dict(story: dict) -> dict:
     }
 
 
+def _norm_url(url: Any) -> str:
+    """Compare websites loosely: scheme, www., case and trailing slash don't count."""
+    u = str(url or "").strip().lower()
+    u = re.sub(r"^https?://", "", u)
+    u = re.sub(r"^www\.", "", u)
+    return u.rstrip("/")
+
+
 def _account_to_dict(acc: Any, info: Any = None) -> dict:
     """Own-profile view. Deliberately omits email, phone number and birthday."""
     return {
@@ -836,9 +844,54 @@ class PrivateBackend(Backend):
             if bio == "":
                 # account_edit only re-sets the biography when it is non-empty
                 self._cl.account_set_biography("")
-            return {"updated": sorted(fields), "profile": _account_to_dict(acc)}
+            if website is not None:
+                # Instagram accepts external_url and silently drops it (links moved
+                # to Edit profile → Links), so confirm against a fresh read.
+                acc = self._cl.account_info()
         except Exception as exc:
             raise _wrap_error("profile_edit", exc)
+        if website is not None and _norm_url(acc.external_url) != _norm_url(website):
+            others = sorted(k for k in fields if k != "external_url")
+            applied = f" Other fields were updated: {', '.join(others)}." if others else ""
+            raise PrivateAPIError(
+                "profile_edit failed: Instagram didn't apply the website (links are now "
+                f"managed in the app: Edit profile → Links).{applied}"
+            )
+        return {"updated": sorted(fields), "profile": _account_to_dict(acc)}
+
+    def profile_picture_remove(self) -> dict:
+        try:
+            self._cl.private_request(
+                "accounts/remove_profile_picture/",
+                data={"_uuid": self._cl.uuid, "_uid": self._cl.user_id},
+                with_signature=False,
+            )
+            return {"status": "removed"}
+        except Exception as exc:
+            raise _wrap_error("profile_picture_remove", exc)
+
+    def profile_convert(self, to: str, category_id: str | None = None) -> dict:
+        kwargs = {"category_id": category_id} if category_id else {}
+        try:
+            if to == "creator":
+                acc = self._cl.account_convert_to_creator(**kwargs)
+            elif to == "business":
+                acc = self._cl.account_convert_to_business(**kwargs)
+            else:
+                raise ValueError("--to must be 'creator' or 'business'")
+            return {"converted_to": to, "profile": _account_to_dict(acc)}
+        except Exception as exc:
+            raise _wrap_error("profile_convert", exc)
+
+    def story_delete(self, story_id: str) -> dict:
+        pk = story_id.strip().split("_", 1)[0]
+        try:
+            ok = self._cl.story_delete(pk)
+        except Exception as exc:
+            raise _wrap_error("story_delete", exc)
+        if not ok:
+            raise PrivateAPIError(f"story_delete failed: Instagram did not confirm deleting story {pk}")
+        return {"story_id": pk, "status": "deleted"}
 
     def profile_picture(self, media: str) -> dict:
         try:

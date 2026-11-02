@@ -69,3 +69,12 @@ def viewers(
 ):
     """List viewers of a story."""
     dispatch(ctx, Feature.STORY_VIEWERS, lambda b: b.story_viewers(story_id))
+
+
+@story_app.command("delete")
+def delete(
+    ctx: typer.Context,
+    story_id: str = typer.Argument(..., help="Story ID (from story list)"),
+):
+    """Delete one of your stories."""
+    dispatch(ctx, Feature.STORY_DELETE, lambda b: b.story_delete(story_id))
