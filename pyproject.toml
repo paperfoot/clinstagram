@@ -1,7 +1,9 @@
 [project]
 name = "clinstagram"
-version = "0.3.3"
+version = "0.3.4"
 description = "Hybrid Instagram CLI for OpenClaw — Graph API + Private API"
+readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = [
     "typer>=0.12.0",
@@ -24,6 +26,9 @@ dev = [
 
 [project.scripts]
 clinstagram = "clinstagram.cli:app"
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "README.md", "LICENSE", "SKILL.md", "pyproject.toml"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/clinstagram"]

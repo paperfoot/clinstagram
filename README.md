@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo.png" alt="Clinstagram" width="128">
+<img src="https://raw.githubusercontent.com/paperfoot/clinstagram/main/assets/logo.png" alt="Clinstagram" width="128">
 
 # Clinstagram
 
@@ -16,8 +16,8 @@
 
 [![PyPI](https://img.shields.io/pypi/v/clinstagram?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/clinstagram/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776ab?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-156%20passing-brightgreen?style=for-the-badge)](tests/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](https://github.com/paperfoot/clinstagram/blob/main/LICENSE)
+[![Tests](https://img.shields.io/badge/tests-156%20passing-brightgreen?style=for-the-badge)](https://github.com/paperfoot/clinstagram/tree/main/tests)
 
 ---
 
@@ -250,7 +250,7 @@ Secrets are stored in your OS keychain (macOS Keychain, Linux Secret Service, Wi
 
 ## Contributing
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+Contributions are welcome. See [CONTRIBUTING.md](https://github.com/paperfoot/clinstagram/blob/main/CONTRIBUTING.md) for guidelines.
 
 ```bash
 git clone https://github.com/paperfoot/clinstagram.git
@@ -261,7 +261,7 @@ pytest tests/ -v   # 120 tests
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/paperfoot/clinstagram/blob/main/LICENSE)
 
 ---
 
