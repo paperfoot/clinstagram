@@ -77,10 +77,10 @@ class Backend(ABC):
     def analytics_hashtag(self, tag: str) -> dict: ...
 
     @abstractmethod
-    def followers_list(self, limit: int = 100) -> list[dict]: ...
+    def followers_list(self, limit: int = 100, user: str = "") -> list[dict]: ...
 
     @abstractmethod
-    def followers_following(self, limit: int = 100) -> list[dict]: ...
+    def followers_following(self, limit: int = 100, user: str = "") -> list[dict]: ...
 
     @abstractmethod
     def follow(self, user: str) -> dict: ...
@@ -117,3 +117,66 @@ class Backend(ABC):
     # Media download
     @abstractmethod
     def media_download(self, media_ref: str, output_dir: str = "") -> dict: ...
+
+    # ------------------------------------------------------------------
+    # Channel operations. Not every backend supports these, so they default
+    # to NotImplementedError (dispatch maps it to CAPABILITY_UNAVAILABLE)
+    # instead of forcing stub overrides.
+    # ------------------------------------------------------------------
+
+    def _unsupported(self, what: str):
+        raise NotImplementedError(
+            f"{what} is not supported by the {self.name} backend. Use --backend private."
+        )
+
+    def profile_show(self) -> dict:
+        self._unsupported("profile show")
+
+    def profile_edit(self, bio: str | None = None, name: str | None = None,
+                     website: str | None = None) -> dict:
+        self._unsupported("profile edit")
+
+    def profile_picture(self, media: str) -> dict:
+        self._unsupported("profile picture")
+
+    def post_delete(self, media_ref: str) -> dict:
+        self._unsupported("post delete")
+
+    def post_edit(self, media_ref: str, caption: str) -> dict:
+        self._unsupported("post edit")
+
+    def dm_pending(self, limit: int = 20) -> list[dict]:
+        self._unsupported("dm pending")
+
+    def dm_approve(self, thread_id: str) -> dict:
+        self._unsupported("dm approve")
+
+    def dm_seen(self, thread_id: str) -> dict:
+        self._unsupported("dm seen")
+
+    def comments_like(self, comment_ref: str) -> dict:
+        self._unsupported("comments like")
+
+    def comments_unlike(self, comment_ref: str) -> dict:
+        self._unsupported("comments unlike")
+
+    def comments_pin(self, comment_ref: str) -> dict:
+        self._unsupported("comments pin")
+
+    def comments_unpin(self, comment_ref: str) -> dict:
+        self._unsupported("comments unpin")
+
+    def activity(self, limit: int = 50) -> list[dict]:
+        self._unsupported("activity")
+
+    def analytics_insights(self, media_ref: str) -> dict:
+        self._unsupported("analytics insights")
+
+    def analytics_account(self) -> dict:
+        self._unsupported("analytics account")
+
+    def media_likers(self, media_ref: str, limit: int = 100) -> list[dict]:
+        self._unsupported("media likers")
+
+    def user_tagged(self, username: str, limit: int = 20) -> list[dict]:
+        self._unsupported("user tagged")

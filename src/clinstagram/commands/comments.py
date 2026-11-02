@@ -60,3 +60,41 @@ def delete(
         lambda b: b.comments_delete(comment_id),
         preferred_backend=preferred_backend,
     )
+
+
+@comments_app.command("like")
+def like(
+    ctx: typer.Context,
+    comment_ref: str = typer.Argument(..., help="Comment reference from 'comments list'"),
+):
+    """Like a comment. Requires --enable-growth-actions."""
+    _require_growth(ctx)
+    dispatch(ctx, Feature.COMMENTS_LIKE, lambda b: b.comments_like(comment_ref))
+
+
+@comments_app.command("unlike")
+def unlike(
+    ctx: typer.Context,
+    comment_ref: str = typer.Argument(..., help="Comment reference from 'comments list'"),
+):
+    """Remove your like from a comment. Requires --enable-growth-actions."""
+    _require_growth(ctx)
+    dispatch(ctx, Feature.COMMENTS_UNLIKE, lambda b: b.comments_unlike(comment_ref))
+
+
+@comments_app.command("pin")
+def pin(
+    ctx: typer.Context,
+    comment_ref: str = typer.Argument(..., help="Comment reference from 'comments list' (on your post)"),
+):
+    """Pin a comment to the top of your post."""
+    dispatch(ctx, Feature.COMMENTS_PIN, lambda b: b.comments_pin(comment_ref))
+
+
+@comments_app.command("unpin")
+def unpin(
+    ctx: typer.Context,
+    comment_ref: str = typer.Argument(..., help="Comment reference from 'comments list' (on your post)"),
+):
+    """Unpin a comment from your post."""
+    dispatch(ctx, Feature.COMMENTS_UNPIN, lambda b: b.comments_unpin(comment_ref))

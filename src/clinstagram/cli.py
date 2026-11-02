@@ -321,6 +321,18 @@ def update(
     run_update(ctx, check=check, apply=apply, yes=yes, pre=pre)
 
 
+@app.command("activity")
+def activity(
+    ctx: typer.Context,
+    limit: int = typer.Option(50, "--limit", "-n", help="Max notifications to return"),
+):
+    """Your notifications: new followers, likes, comments, mentions, tags."""
+    from clinstagram.backends.capabilities import Feature
+    from clinstagram.commands._dispatch import dispatch
+
+    dispatch(ctx, Feature.ACTIVITY, lambda b: b.activity(limit))
+
+
 # Lazy-load command groups to avoid importing instagrapi/httpx at startup.
 def _lazy_register() -> None:
     from clinstagram.commands.analytics import analytics_app
@@ -333,12 +345,14 @@ def _lazy_register() -> None:
     from clinstagram.commands.like import like_app
     from clinstagram.commands.media import media_app
     from clinstagram.commands.post import post_app
+    from clinstagram.commands.profile import profile_app
     from clinstagram.commands.skill_install import skill_app
     from clinstagram.commands.story import story_app
     from clinstagram.commands.user import user_app
 
     app.add_typer(auth_app, name="auth")
     app.add_typer(config_app, name="config")
+    app.add_typer(profile_app, name="profile")
     app.add_typer(post_app, name="post")
     app.add_typer(dm_app, name="dm")
     app.add_typer(story_app, name="story")

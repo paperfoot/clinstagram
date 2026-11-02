@@ -105,3 +105,22 @@ def carousel(
         lambda b: b.post_carousel([stage(p, ctx.obj["_backend_name"]) for p in paths], caption),
         preferred_backend=_prefer_private_for_media(ctx, Feature.POST_CAROUSEL, *paths),
     )
+
+
+@post_app.command("delete")
+def delete(
+    ctx: typer.Context,
+    media_ref: str = typer.Argument(..., help="Media ID, shortcode, or post URL"),
+):
+    """Delete one of your posts or reels. Cannot be undone."""
+    dispatch(ctx, Feature.POST_DELETE, lambda b: b.post_delete(media_ref))
+
+
+@post_app.command("edit")
+def edit(
+    ctx: typer.Context,
+    media_ref: str = typer.Argument(..., help="Media ID, shortcode, or post URL"),
+    caption: str = typer.Option(..., "--caption", "-c", help="New caption (replaces the old one)"),
+):
+    """Replace the caption of one of your posts."""
+    dispatch(ctx, Feature.POST_EDIT, lambda b: b.post_edit(media_ref, caption))

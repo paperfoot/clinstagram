@@ -33,3 +33,13 @@ def download(
         Feature.MEDIA_DOWNLOAD,
         lambda b: b.media_download(media_ref, output_dir=output),
     )
+
+
+@media_app.command("likers")
+def likers(
+    ctx: typer.Context,
+    media_ref: str = typer.Argument(..., help="Media ID, shortcode, or post URL"),
+    limit: int = typer.Option(100, "--limit", "-n", help="Max users to return"),
+):
+    """List accounts that liked a post."""
+    dispatch(ctx, Feature.MEDIA_LIKERS, lambda b: b.media_likers(media_ref, limit))

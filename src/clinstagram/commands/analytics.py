@@ -30,3 +30,18 @@ def hashtag(
 ):
     """Show hashtag analytics."""
     dispatch(ctx, Feature.ANALYTICS_HASHTAG, lambda b: b.analytics_hashtag(tag))
+
+
+@analytics_app.command("insights")
+def insights(
+    ctx: typer.Context,
+    media_id: str = typer.Argument(..., help="Media ID, shortcode, or post URL (Graph: numeric ID)"),
+):
+    """Reach, views, saves, shares for one of your posts. Needs a professional account."""
+    dispatch(ctx, Feature.ANALYTICS_INSIGHTS, lambda b: b.analytics_insights(media_id))
+
+
+@analytics_app.command("account")
+def account(ctx: typer.Context):
+    """Account-level insights (reach, engagement). Needs a professional account."""
+    dispatch(ctx, Feature.ANALYTICS_ACCOUNT, lambda b: b.analytics_account())

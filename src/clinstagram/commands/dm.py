@@ -107,3 +107,30 @@ def search(
         q = query.lower()
         return [t for t in threads if q in str(t).lower()]
     dispatch(ctx, Feature.DM_SEARCH, _search)
+
+
+@dm_app.command("pending")
+def pending(
+    ctx: typer.Context,
+    limit: int = typer.Option(20, "--limit", "-n", help="Max requests to return"),
+):
+    """List message requests (DMs from people you don't follow)."""
+    dispatch(ctx, Feature.DM_PENDING, lambda b: b.dm_pending(limit))
+
+
+@dm_app.command("approve")
+def approve(
+    ctx: typer.Context,
+    thread_id: str = typer.Argument(..., help="Thread ID from 'dm pending'"),
+):
+    """Accept a message request so it moves to the main inbox."""
+    dispatch(ctx, Feature.DM_APPROVE, lambda b: b.dm_approve(thread_id))
+
+
+@dm_app.command("seen")
+def seen(
+    ctx: typer.Context,
+    thread_id: str = typer.Argument(..., help="Thread ID"),
+):
+    """Mark a DM thread as read."""
+    dispatch(ctx, Feature.DM_SEEN, lambda b: b.dm_seen(thread_id))

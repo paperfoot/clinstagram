@@ -472,11 +472,57 @@ class GraphBackend(Backend):
         params = {"fields": "id,name,media_count", "user_id": me}
         return self._get(hashtag_id, params)
 
+    # Media metrics valid for feed posts and reels after Meta's 2025 change
+    # (impressions/plays were replaced by views).
+    _MEDIA_INSIGHT_METRICS = "reach,views,likes,comments,saved,shares,total_interactions"
+    _ACCOUNT_INSIGHT_METRICS = "reach,views,accounts_engaged,total_interactions,profile_links_taps"
+
+    def profile_show(self) -> dict:
+        me = self._me_id()
+        data = self._get(me, {
+            "fields": "id,username,name,biography,website,profile_picture_url,"
+                      "followers_count,follows_count,media_count",
+        })
+        out = self._normalize_user(data)
+        out["website"] = data.get("website")
+        out["is_business"] = True  # Graph API access implies a professional account
+        return out
+
+    def analytics_insights(self, media_ref: str) -> dict:
+        if not media_ref.isdigit():
+            raise ValueError(
+                "The Graph API needs its own numeric media ID (from 'user posts' or "
+                "'analytics post'); shortcodes and URLs work only with --backend private."
+            )
+        data = self._get(f"{media_ref}/insights", {"metric": self._MEDIA_INSIGHT_METRICS})
+        return {"media_id": media_ref, "insights": self._flatten_insights(data)}
+
+    def analytics_account(self) -> dict:
+        me = self._me_id()
+        data = self._get(f"{me}/insights", {
+            "metric": self._ACCOUNT_INSIGHT_METRICS,
+            "period": "day",
+            "metric_type": "total_value",
+        })
+        return {"period": "day", "insights": self._flatten_insights(data)}
+
+    @staticmethod
+    def _flatten_insights(data: Any) -> dict:
+        out: dict[str, Any] = {}
+        for item in (data or {}).get("data", []):
+            name = item.get("name")
+            if "total_value" in item:
+                out[name] = (item.get("total_value") or {}).get("value")
+            else:
+                values = item.get("values") or []
+                out[name] = values[-1].get("value") if values else None
+        return out
+
     # ------------------------------------------------------------------
     # Followers
     # ------------------------------------------------------------------
 
-    def followers_list(self, limit: int = 100) -> list[dict]:
+    def followers_list(self, limit: int = 100, user: str = "") -> list[dict]:
         # Graph API does not expose a full followers list.
         # Only business discovery can show follower counts.
         raise NotImplementedError(
@@ -484,7 +530,7 @@ class GraphBackend(Backend):
             "Use --backend private for this feature."
         )
 
-    def followers_following(self, limit: int = 100) -> list[dict]:
+    def followers_following(self, limit: int = 100, user: str = "") -> list[dict]:
         raise NotImplementedError(
             "The Graph API does not provide a following list. "
             "Use --backend private for this feature."

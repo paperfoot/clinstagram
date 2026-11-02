@@ -13,18 +13,22 @@ followers_app = make_subgroup("Manage followers")
 def list_followers(
     ctx: typer.Context,
     limit: int = typer.Option(100, "--limit", "-n", help="Max followers to return"),
+    user: str = typer.Option("", "--user", "-u", help="Another account (default: you)"),
 ):
-    """List your followers."""
-    dispatch(ctx, Feature.FOLLOWERS_LIST, lambda b: b.followers_list(limit))
+    """List followers of your account, or of --user."""
+    target = strip_at(user)
+    dispatch(ctx, Feature.FOLLOWERS_LIST, lambda b: b.followers_list(limit, user=target))
 
 
 @followers_app.command("following")
 def following(
     ctx: typer.Context,
     limit: int = typer.Option(100, "--limit", "-n", help="Max accounts to return"),
+    user: str = typer.Option("", "--user", "-u", help="Another account (default: you)"),
 ):
-    """List accounts you follow."""
-    dispatch(ctx, Feature.FOLLOWERS_FOLLOWING, lambda b: b.followers_following(limit))
+    """List accounts you (or --user) follow."""
+    target = strip_at(user)
+    dispatch(ctx, Feature.FOLLOWERS_FOLLOWING, lambda b: b.followers_following(limit, user=target))
 
 
 @followers_app.command("follow")

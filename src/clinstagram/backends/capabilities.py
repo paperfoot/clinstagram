@@ -51,6 +51,28 @@ class Feature(str, Enum):
     HASHTAG_RECENT = "hashtag_recent"
     # Media
     MEDIA_DOWNLOAD = "media_download"
+    MEDIA_LIKERS = "media_likers"
+    # Profile (own account)
+    PROFILE_SHOW = "profile_show"
+    PROFILE_EDIT = "profile_edit"
+    PROFILE_PICTURE = "profile_picture"
+    # Post management
+    POST_DELETE = "post_delete"
+    POST_EDIT = "post_edit"
+    # DM management
+    DM_APPROVE = "dm_approve"
+    DM_SEEN = "dm_seen"
+    # Comment moderation
+    COMMENTS_LIKE = "comments_like"
+    COMMENTS_UNLIKE = "comments_unlike"
+    COMMENTS_PIN = "comments_pin"
+    COMMENTS_UNPIN = "comments_unpin"
+    # Notifications and insights
+    ACTIVITY = "activity"
+    ANALYTICS_INSIGHTS = "analytics_insights"
+    ANALYTICS_ACCOUNT = "analytics_account"
+    # Prospecting
+    USER_TAGGED = "user_tagged"
 
 
 CAPABILITY_MATRIX: dict[str, set[Feature]] = {
@@ -59,6 +81,7 @@ CAPABILITY_MATRIX: dict[str, set[Feature]] = {
         Feature.COMMENTS_LIST, Feature.COMMENTS_REPLY, Feature.COMMENTS_DELETE,
         Feature.COMMENTS_ADD,
         Feature.ANALYTICS_PROFILE, Feature.ANALYTICS_POST, Feature.ANALYTICS_HASHTAG,
+        Feature.ANALYTICS_INSIGHTS, Feature.ANALYTICS_ACCOUNT, Feature.PROFILE_SHOW,
         Feature.HASHTAG_TOP, Feature.HASHTAG_RECENT,
     },
     "graph_fb": {
@@ -69,6 +92,7 @@ CAPABILITY_MATRIX: dict[str, set[Feature]] = {
         Feature.COMMENTS_LIST, Feature.COMMENTS_REPLY, Feature.COMMENTS_DELETE,
         Feature.COMMENTS_ADD,
         Feature.ANALYTICS_PROFILE, Feature.ANALYTICS_POST, Feature.ANALYTICS_HASHTAG,
+        Feature.ANALYTICS_INSIGHTS, Feature.ANALYTICS_ACCOUNT, Feature.PROFILE_SHOW,
         Feature.HASHTAG_TOP, Feature.HASHTAG_RECENT,
         Feature.USER_INFO, Feature.USER_SEARCH,
     },
@@ -84,12 +108,16 @@ READ_ONLY_FEATURES: set[Feature] = {
     Feature.FOLLOWERS_LIST, Feature.FOLLOWERS_FOLLOWING,
     Feature.USER_INFO, Feature.USER_SEARCH, Feature.USER_POSTS,
     Feature.HASHTAG_TOP, Feature.HASHTAG_RECENT,
-    Feature.MEDIA_DOWNLOAD,
+    Feature.MEDIA_DOWNLOAD, Feature.MEDIA_LIKERS,
+    Feature.PROFILE_SHOW, Feature.ACTIVITY,
+    Feature.ANALYTICS_INSIGHTS, Feature.ANALYTICS_ACCOUNT,
+    Feature.USER_TAGGED,
 }
 
 GROWTH_ACTIONS: set[Feature] = {
     Feature.FOLLOW, Feature.UNFOLLOW,
-    Feature.LIKE_POST, Feature.UNLIKE_POST, Feature.COMMENTS_ADD
+    Feature.LIKE_POST, Feature.UNLIKE_POST, Feature.COMMENTS_ADD,
+    Feature.COMMENTS_LIKE, Feature.COMMENTS_UNLIKE,
 }
 
 

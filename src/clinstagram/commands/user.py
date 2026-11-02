@@ -35,3 +35,13 @@ def posts(
 ):
     """List a user's recent media."""
     dispatch(ctx, Feature.USER_POSTS, lambda b: b.user_posts(strip_at(username), limit=limit))
+
+
+@user_app.command("tagged")
+def tagged(
+    ctx: typer.Context,
+    username: str = typer.Argument(..., help="Username (with or without @)"),
+    limit: int = typer.Option(20, "--limit", help="Number of posts to list"),
+):
+    """List posts other accounts tagged this user in."""
+    dispatch(ctx, Feature.USER_TAGGED, lambda b: b.user_tagged(strip_at(username), limit=limit))

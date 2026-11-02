@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from pathlib import Path
 from typing import Any
 
@@ -146,6 +148,91 @@ def _message_to_dict(msg: Any) -> dict:
         "timestamp": str(msg.timestamp) if msg.timestamp else None,
         "item_type": getattr(msg, "item_type", None),
     }
+
+
+_RICH_TEXT_TOKEN = re.compile(r"\{([^|{}]+)\|[^{}]*\}")
+
+# Ordered: first match wins. Matched against the plain notification text.
+_ACTIVITY_TYPES = (
+    ("follow", ("started following you", "requested to follow you")),
+    ("comment_like", ("liked your comment",)),
+    ("like", ("liked your", "liked a photo", "liked a video", "liked a reel")),
+    ("mention", ("mentioned you",)),
+    ("comment", ("commented", "replied to your comment")),
+    ("tag", ("tagged you",)),
+    ("suggestion", ("follow suggestions", "you might know", "suggested for you")),
+)
+
+
+def _activity_type(text: str) -> str:
+    lowered = text.lower()
+    for kind, needles in _ACTIVITY_TYPES:
+        if any(n in lowered for n in needles):
+            return kind
+    return "other"
+
+
+def _activity_to_dict(story: dict) -> dict:
+    """Normalize one news-inbox story into {type, text, user, media_id, timestamp}."""
+    from datetime import datetime, timezone
+
+    args = story.get("args") or {}
+    raw = args.get("rich_text") or args.get("text") or ""
+    text = _RICH_TEXT_TOKEN.sub(lambda m: m.group(1), raw).strip()
+    ts = args.get("timestamp")
+    timestamp = None
+    if isinstance(ts, (int, float)):
+        timestamp = datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+    medias = args.get("media") or []
+    media_id = None
+    if medias and isinstance(medias[0], dict) and medias[0].get("id"):
+        media_id = str(medias[0]["id"]).split("_", 1)[0]
+    user = None
+    if args.get("profile_id") or args.get("profile_name"):
+        user = {
+            "id": str(args["profile_id"]) if args.get("profile_id") else None,
+            "username": args.get("profile_name"),
+            "profile_picture_url": args.get("profile_image"),
+        }
+    return {
+        "type": _activity_type(text),
+        "text": text,
+        "user": user,
+        "media_id": media_id,
+        "comment_id": str(args["comment_id"]) if args.get("comment_id") else None,
+        "timestamp": timestamp,
+        "story_type": story.get("story_type"),
+    }
+
+
+def _account_to_dict(acc: Any, info: Any = None) -> dict:
+    """Own-profile view. Deliberately omits email, phone number and birthday."""
+    return {
+        "id": str(acc.pk),
+        "username": acc.username,
+        "full_name": acc.full_name or None,
+        "biography": acc.biography or None,
+        "website": acc.external_url or None,
+        "profile_picture_url": str(acc.profile_pic_url) if acc.profile_pic_url else None,
+        "is_private": acc.is_private,
+        "is_verified": acc.is_verified,
+        "is_business": acc.is_business,
+        "followers_count": getattr(info, "follower_count", None),
+        "following_count": getattr(info, "following_count", None),
+        "media_count": getattr(info, "media_count", None),
+        "category": getattr(info, "category_name", None) or getattr(info, "category", None) or None,
+    }
+
+
+def _business_required(fn_name: str, exc: Exception) -> PrivateAPIError:
+    msg = str(exc)
+    if "business" in msg.lower() or "insights" in msg.lower():
+        return PrivateAPIError(
+            f"{fn_name} failed: insights exist only for your own posts on a professional "
+            "(Business or Creator) account. Switch in the Instagram app: Settings > "
+            f"Account type and tools > Switch to professional account. ({msg})"
+        )
+    return _wrap_error(fn_name, exc)
 
 
 def _wrap_error(fn_name: str, exc: Exception) -> PrivateAPIError:
@@ -472,19 +559,23 @@ class PrivateBackend(Backend):
     # Followers
     # ------------------------------------------------------------------
 
-    def followers_list(self, limit: int = 100) -> list[dict]:
+    def followers_list(self, limit: int = 100, user: str = "") -> list[dict]:
         try:
-            user_id = self._cl.user_id
+            user_id = int(self._user_id_from_username(user)) if user else self._cl.user_id
             followers = self._cl.user_followers(user_id, amount=limit)
-            return [_user_to_dict(u) for u in followers.values()]
+            return [_user_to_dict(u) for u in list(followers.values())[:limit]]
+        except PrivateAPIError:
+            raise
         except Exception as exc:
             raise _wrap_error("followers_list", exc)
 
-    def followers_following(self, limit: int = 100) -> list[dict]:
+    def followers_following(self, limit: int = 100, user: str = "") -> list[dict]:
         try:
-            user_id = self._cl.user_id
+            user_id = int(self._user_id_from_username(user)) if user else self._cl.user_id
             following = self._cl.user_following(user_id, amount=limit)
-            return [_user_to_dict(u) for u in following.values()]
+            return [_user_to_dict(u) for u in list(following.values())[:limit]]
+        except PrivateAPIError:
+            raise
         except Exception as exc:
             raise _wrap_error("followers_following", exc)
 
@@ -633,3 +724,190 @@ class PrivateBackend(Backend):
             }
         except Exception as exc:
             raise _wrap_error("media_download", exc)
+
+
+    # ------------------------------------------------------------------
+    # Profile (own account)
+    # ------------------------------------------------------------------
+
+    def _split_comment_ref(self, comment_ref: str, action: str) -> tuple[str, int]:
+        parts = comment_ref.split(":", 1)
+        if len(parts) != 2 or not parts[1].isdigit():
+            raise ValueError(
+                f"{action} needs the comment_ref returned by 'comments list' "
+                "(format: media_id:comment_id)."
+            )
+        return self._media_pk(parts[0]), int(parts[1])
+
+    def profile_show(self) -> dict:
+        try:
+            acc = self._cl.account_info()
+            info = self._cl.user_info(int(acc.pk))
+            return _account_to_dict(acc, info)
+        except Exception as exc:
+            raise _wrap_error("profile_show", exc)
+
+    def profile_edit(self, bio: str | None = None, name: str | None = None,
+                     website: str | None = None) -> dict:
+        fields: dict[str, str] = {}
+        if bio is not None:
+            fields["biography"] = bio
+        if name is not None:
+            fields["full_name"] = name
+        if website is not None:
+            fields["external_url"] = website
+        if not fields:
+            raise ValueError("Nothing to change: pass --bio, --name and/or --website.")
+        try:
+            acc = self._cl.account_edit(**fields)
+            if bio == "":
+                # account_edit only re-sets the biography when it is non-empty
+                self._cl.account_set_biography("")
+            return {"updated": sorted(fields), "profile": _account_to_dict(acc)}
+        except Exception as exc:
+            raise _wrap_error("profile_edit", exc)
+
+    def profile_picture(self, media: str) -> dict:
+        try:
+            user = self._cl.account_change_picture(Path(media))
+            pic = getattr(user, "profile_pic_url", None)
+            return {"status": "updated", "profile_picture_url": str(pic) if pic else None}
+        except Exception as exc:
+            raise _wrap_error("profile_picture", exc)
+
+    # ------------------------------------------------------------------
+    # Post management
+    # ------------------------------------------------------------------
+
+    def post_delete(self, media_ref: str) -> dict:
+        try:
+            pk = self._media_pk(media_ref)
+            ok = self._cl.media_delete(self._cl.media_id(pk))
+            if not ok:
+                raise RuntimeError("Instagram did not confirm the deletion")
+            return {"media_id": pk, "status": "deleted"}
+        except Exception as exc:
+            raise _wrap_error("post_delete", exc)
+
+    def post_edit(self, media_ref: str, caption: str) -> dict:
+        try:
+            pk = self._media_pk(media_ref)
+            self._cl.media_edit(self._cl.media_id(pk), caption)
+            return {"media_id": pk, "caption": caption, "status": "edited"}
+        except Exception as exc:
+            raise _wrap_error("post_edit", exc)
+
+    # ------------------------------------------------------------------
+    # DM management
+    # ------------------------------------------------------------------
+
+    def dm_pending(self, limit: int = 20) -> list[dict]:
+        try:
+            threads = self._cl.direct_pending_inbox(amount=limit)
+            return [_thread_to_dict(t) for t in threads[:limit]]
+        except Exception as exc:
+            raise _wrap_error("dm_pending", exc)
+
+    def dm_approve(self, thread_id: str) -> dict:
+        try:
+            ok = self._cl.direct_pending_approve(int(thread_id))
+            return {"thread_id": thread_id, "status": "approved" if ok else "failed"}
+        except Exception as exc:
+            raise _wrap_error("dm_approve", exc)
+
+    def dm_seen(self, thread_id: str) -> dict:
+        try:
+            ok = self._cl.direct_send_seen(int(thread_id))
+            return {"thread_id": thread_id, "status": "seen" if ok else "failed"}
+        except Exception as exc:
+            raise _wrap_error("dm_seen", exc)
+
+    # ------------------------------------------------------------------
+    # Comment moderation
+    # ------------------------------------------------------------------
+
+    def comments_like(self, comment_ref: str) -> dict:
+        try:
+            _, cid = self._split_comment_ref(comment_ref, "comments like")
+            self._cl.comment_like(cid)
+            return {"comment_ref": comment_ref, "status": "liked"}
+        except Exception as exc:
+            raise _wrap_error("comments_like", exc)
+
+    def comments_unlike(self, comment_ref: str) -> dict:
+        try:
+            _, cid = self._split_comment_ref(comment_ref, "comments unlike")
+            self._cl.comment_unlike(cid)
+            return {"comment_ref": comment_ref, "status": "unliked"}
+        except Exception as exc:
+            raise _wrap_error("comments_unlike", exc)
+
+    def comments_pin(self, comment_ref: str) -> dict:
+        try:
+            media_pk, cid = self._split_comment_ref(comment_ref, "comments pin")
+            self._cl.comment_pin(media_pk, cid)
+            return {"comment_ref": comment_ref, "status": "pinned"}
+        except Exception as exc:
+            raise _wrap_error("comments_pin", exc)
+
+    def comments_unpin(self, comment_ref: str) -> dict:
+        try:
+            media_pk, cid = self._split_comment_ref(comment_ref, "comments unpin")
+            self._cl.comment_unpin(media_pk, cid)
+            return {"comment_ref": comment_ref, "status": "unpinned"}
+        except Exception as exc:
+            raise _wrap_error("comments_unpin", exc)
+
+    # ------------------------------------------------------------------
+    # Notifications and insights
+    # ------------------------------------------------------------------
+
+    def activity(self, limit: int = 50) -> list[dict]:
+        try:
+            inbox = self._cl.news_inbox_v1(mark_as_seen=False)
+        except Exception as exc:
+            raise _wrap_error("activity", exc)
+        stories = (inbox.get("new_stories") or []) + (inbox.get("old_stories") or [])
+        return [_activity_to_dict(st) for st in stories[:limit]]
+
+    def analytics_insights(self, media_ref: str) -> dict:
+        try:
+            pk = self._media_pk(media_ref)
+            data = self._cl.insights_media(int(pk))
+        except Exception as exc:
+            raise _business_required("analytics_insights", exc)
+        return {"media_id": pk, "insights": data}
+
+    def analytics_account(self) -> dict:
+        try:
+            data = self._cl.insights_account()
+        except Exception as exc:
+            raise _business_required("analytics_account", exc)
+        account_type = ((data or {}).get("status") or {}).get("account_type")
+        if account_type == "PERSONAL_ACCOUNT":
+            # Instagram answers with an all-zero skeleton for personal accounts
+            raise _business_required(
+                "analytics_account", RuntimeError("Account is not business account")
+            )
+        return data
+
+    # ------------------------------------------------------------------
+    # Prospecting
+    # ------------------------------------------------------------------
+
+    def media_likers(self, media_ref: str, limit: int = 100) -> list[dict]:
+        try:
+            users = self._cl.media_likers(self._media_pk(media_ref))
+            return [_user_to_dict(u) for u in users[:limit]]
+        except Exception as exc:
+            raise _wrap_error("media_likers", exc)
+
+    def user_tagged(self, username: str, limit: int = 20) -> list[dict]:
+        try:
+            user_id = self._user_id_from_username(username)
+            medias = self._cl.usertag_medias(int(user_id), amount=limit)
+            return [_media_to_dict(m) for m in medias[:limit]]
+        except PrivateAPIError:
+            raise
+        except Exception as exc:
+            raise _wrap_error("user_tagged", exc)
