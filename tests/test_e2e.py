@@ -2,6 +2,7 @@ import json
 
 from typer.testing import CliRunner
 
+from clinstagram import __version__
 from clinstagram.cli import app
 
 runner = CliRunner()
@@ -40,7 +41,7 @@ def test_full_workflow(tmp_path, monkeypatch):
 def test_version_flag():
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert "0.3.2" in result.stdout
+    assert __version__ in result.stdout
 
 
 def test_placeholder_commands():

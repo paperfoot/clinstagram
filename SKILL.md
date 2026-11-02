@@ -57,13 +57,16 @@ clinstagram auth login         # Private API (username/password/2FA via instagra
 | `post` | `photo`, `video`, `reel`, `carousel` | Local write media requires `private-enabled` or a public URL |
 | `dm` | `inbox`, `thread ID\|@user`, `send @user "text"`, `send-media`, `search` | Cold DMs = private API only; numeric target = reply |
 | `story` | `list [@user]`, `post-photo`, `post-video`, `viewers ID` | |
-| `comments` | `list MEDIA_ID`, `add`, `reply`, `delete` | pass the `comment_ref` from `comments list` |
+| `comments` | `list MEDIA`, `add`, `reply`, `delete` | pass the `comment_ref` from `comments list` |
 | `analytics` | `profile`, `post ID\|latest`, `hashtag TAG` | |
 | `followers` | `list`, `following`, `follow @user`, `unfollow @user` | follow/unfollow need `--enable-growth-actions` |
-| `user` | `info @user`, `search QUERY`, `posts @user` | official search is username-style lookup, broad search is private |
+| `user` | `info @user`, `search QUERY [--limit N]`, `posts @user` | official search is username-style lookup, broad search is private |
 | `hashtag` | `top TAG`, `recent TAG` | |
-| `like` | `post MEDIA_ID`, `undo MEDIA_ID` | Needs `--enable-growth-actions` |
+| `like` | `post MEDIA`, `undo MEDIA` | Needs `--enable-growth-actions` |
+| `media` | `download MEDIA [--output DIR]` | Photos, reels, carousels |
 | `config` | `show`, `mode MODE`, `set KEY VAL` | Modes: `official-only`, `hybrid-safe`, `private-enabled` |
+
+`MEDIA` can be a numeric media ID, a shortcode (`DfPQchkG1tg`) or a post/reel URL. On the Graph backends, pass the Graph media ID.
 
 ## JSON Output
 

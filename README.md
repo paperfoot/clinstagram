@@ -17,7 +17,7 @@
 [![PyPI](https://img.shields.io/pypi/v/clinstagram?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/clinstagram/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776ab?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-120%20passing-brightgreen?style=for-the-badge)](tests/)
+[![Tests](https://img.shields.io/badge/tests-156%20passing-brightgreen?style=for-the-badge)](tests/)
 
 ---
 
@@ -153,7 +153,7 @@ clinstagram --json analytics hashtag "photography"
 ### Comments
 
 ```bash
-clinstagram --json comments list <media_id> --limit 50
+clinstagram --json comments list <media_id|shortcode|url> --limit 50
 clinstagram --json comments reply <comment_ref> "Great point!"
 clinstagram --json comments delete <comment_ref>
 ```
@@ -171,7 +171,7 @@ clinstagram --json --enable-growth-actions followers unfollow @user
 
 ```bash
 clinstagram --json user info @username
-clinstagram --json user search "alice"
+clinstagram --json user search "alice" --limit 10
 clinstagram --json user posts @username --limit 10
 ```
 

@@ -1,6 +1,7 @@
 import json
 
 from typer.testing import CliRunner
+from clinstagram import __version__
 from clinstagram.cli import app
 
 runner = CliRunner()
@@ -15,7 +16,7 @@ def test_help():
 def test_version():
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert "0.3.2" in result.stdout
+    assert __version__ in result.stdout
 
 
 def test_agent_info():
@@ -23,7 +24,7 @@ def test_agent_info():
     assert result.exit_code == 0
     data = json.loads(result.stdout)
     assert data["name"] == "clinstagram"
-    assert data["version"] == "0.3.2"
+    assert data["version"] == __version__
     assert "commands" in data
     assert "auth status" in data["commands"]
     assert "doctor" in data["commands"]
