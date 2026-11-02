@@ -117,7 +117,7 @@ def test_set_proxy_validates_redacts_and_applies_per_account(env, secrets, tmp_p
 
 def test_unregistered_account_with_creds_is_seeded(env, secrets, tmp_path):
     secrets.set("default", "private_session", "{}")  # e.g. created by an older clinstagram
-    rows = _json(runner.invoke(app, ["--json", "account", "list"], env=env))["data"]
+    rows = _json(runner.invoke(app, ["--json", "--full", "account", "list"], env=env))["data"]
     assert rows == [{"name": "default", "username": None, "backends": ["private"], "proxy": None, "is_default": True}]
     assert load_config(tmp_path).accounts["default"].backends == ["private"]
 

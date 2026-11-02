@@ -44,6 +44,12 @@ def main(
     enable_growth: bool = typer.Option(
         False, "--enable-growth-actions", help="Unlock follow/unfollow, like/unlike, and commenting"
     ),
+    full: bool = typer.Option(
+        False, "--full", help="Include CDN URLs and null fields (default output is compact)"
+    ),
+    fields: Optional[str] = typer.Option(
+        None, "--fields", help="Comma-separated fields to return per item, dotted paths ok (e.g. id,code,user.username)"
+    ),
     version: bool = typer.Option(
         False, "--version", callback=_version_callback, is_eager=True
     ),
@@ -61,6 +67,8 @@ def main(
     # --proxy beats the account's own proxy, which beats the global one.
     ctx.obj["proxy"] = proxy or (entry.proxy if entry else None) or config.proxy
     ctx.obj["dry_run"] = dry_run
+    ctx.obj["full"] = full
+    ctx.obj["fields"] = fields
     ctx.obj["enable_growth"] = enable_growth
     ctx.obj["config_dir"] = config_dir
     ctx.obj["config"] = config
@@ -98,6 +106,14 @@ def agent_info():
             },
             "--proxy": {"description": "Proxy URL for private API", "type": "string"},
             "--dry-run": {"description": "Show what would happen", "type": "boolean"},
+            "--full": {
+                "description": "Include CDN URL fields (profile_picture_url, thumbnail_url, video_url, ...) and null values. Default output omits both; a missing key means null.",
+                "type": "boolean",
+            },
+            "--fields": {
+                "description": "Comma-separated fields to keep per item, dotted paths allowed (e.g. id,code,caption,user.username). Exact projection at full fidelity; unknown fields exit 1 listing the available ones.",
+                "type": "string",
+            },
             "--enable-growth-actions": {
                 "description": "Unlock follow/unfollow, like/unlike, and commenting",
                 "type": "boolean",

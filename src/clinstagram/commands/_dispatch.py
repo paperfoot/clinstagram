@@ -266,9 +266,85 @@ def _output_error(ctx: typer.Context, error: CLIError) -> None:
     raise typer.Exit(code=error.exit_code)
 
 
+# Fields that are long signed CDN URLs (~600–1,200 chars each) and rarely what an
+# agent needs; dropped unless --full. Any string pointing at Instagram's CDN goes too.
+HEAVY_FIELDS = frozenset({
+    "profile_picture_url", "profile_pic_url", "profile_pic_url_hd", "hd_profile_pic_url_info",
+    "thumbnail_url", "video_url", "image_url", "media_url", "display_url",
+    "image_versions", "image_versions2", "video_versions",
+})
+_CDN_URL = re.compile(r"^https?://[^/]*(?:fbcdn\.net|cdninstagram\.com)/", re.I)
+
+
+def compact_data(obj: Any) -> Any:
+    """Token-lean view: drop CDN URL fields and null values, recursively."""
+    if isinstance(obj, dict):
+        return {
+            k: compact_data(v)
+            for k, v in obj.items()
+            if v is not None
+            and k not in HEAVY_FIELDS
+            and not (isinstance(v, str) and _CDN_URL.match(v))
+        }
+    if isinstance(obj, list):
+        return [compact_data(v) for v in obj]
+    return obj
+
+
+def parse_fields(spec: str | None) -> list[tuple[str, ...]]:
+    if not spec:
+        return []
+    return [tuple(p for p in part.strip().split(".") if p) for part in spec.split(",") if part.strip()]
+
+
+def project_data(obj: Any, paths: list[tuple[str, ...]]) -> Any:
+    """Keep only the requested (dotted) fields of each item; lists map over items."""
+    if isinstance(obj, list):
+        return [project_data(v, paths) for v in obj]
+    if not isinstance(obj, dict):
+        return obj
+    heads: dict[str, list[tuple[str, ...]]] = {}
+    for p in paths:
+        heads.setdefault(p[0], []).append(p[1:])
+    out: dict[str, Any] = {}
+    for key, rests in heads.items():
+        if key not in obj:
+            continue
+        out[key] = obj[key] if any(not r for r in rests) else project_data(obj[key], rests)
+    return out
+
+
+def _top_level_keys(data: Any) -> set[str]:
+    items = data if isinstance(data, list) else [data]
+    keys: set[str] = set()
+    for item in items:
+        if isinstance(item, dict):
+            keys.update(item)
+    return keys
+
+
+def shape_output(ctx: typer.Context, data: Any) -> Any:
+    """Apply --fields (exact projection, full fidelity) or the compact default."""
+    obj = ctx.obj or {}
+    paths = parse_fields(obj.get("fields"))
+    if paths:
+        available = _top_level_keys(data)
+        unknown = sorted({p[0] for p in paths} - available)
+        if unknown and available:
+            output_error(ctx, CLIError(
+                exit_code=ExitCode.USER_ERROR,
+                error=f"Unknown field(s) for --fields: {', '.join(unknown)}",
+                remediation=f"Available: {', '.join(sorted(available))}",
+            ))
+        return project_data(data, paths)
+    if obj.get("full"):
+        return data
+    return compact_data(data)
+
+
 def output_success(ctx: typer.Context, data: Any, backend_used: str | None = None) -> None:
     """Emit a standard success envelope."""
-    _output_response(ctx, CLIResponse(data=data, backend_used=backend_used))
+    _output_response(ctx, CLIResponse(data=shape_output(ctx, data), backend_used=backend_used))
 
 
 def output_error(ctx: typer.Context, error: CLIError) -> None:
@@ -451,6 +527,8 @@ def dispatch(
         with contextlib.redirect_stdout(sys.stderr):
             result = action(backend)
         output_success(ctx, result, backend_used=backend_name)
+    except typer.Exit:
+        raise  # an envelope was already written (e.g. --fields validation)
     except NotImplementedError as exc:
         output_error(ctx, CLIError(
             exit_code=ExitCode.CAPABILITY_UNAVAILABLE,
