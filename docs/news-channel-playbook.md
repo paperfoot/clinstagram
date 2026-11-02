@@ -40,15 +40,17 @@ People on Instagram scroll; they don't read. A post has about two seconds to ear
 
 **The caption shape**
 
-1. **Hook line.** One emoji, then the finding as a claim with a number, or a question. Never the paper's title. FoundMyFitness: "Wall sits lowered blood pressure by almost 10 points in just four weeks."
-2. **Three short blocks**, a blank line between each, two sentences at most:
-   - 🔬 what they found, in words a 14-year-old would follow
-   - 👥 or 🐭 who was studied: people or mice, how many, what kind of study
-   - ⚠️ the catch: not replicated, mice only, association not cause
-3. **One ask.** Either "👉 Follow <topic> free, link in bio" or the comment-to-DM ask (below). Never both.
-4. **Three to five hashtags** at the very end, or none. The accounts that grow use few.
+1. **Hook line.** One emoji, then the finding as a claim with a number, or a question. Name the institution when it carries weight ("Harvard scientists made old, blind mice see again").
+2. **Who and how.** Name the lead scientists and their institution, and one or two concrete details of the method (the genes, the dose, how long). Vague captions read like content farms; names, places and specifics read like news.
+3. **What happened**, with the paper's own numbers.
+4. **The catch**: mice or people, how many, observational or trial, preprint or peer reviewed.
+5. **One ask**: "Comment WORD and we'll send you the paper", or "Follow <topic> free, link in bio". Never both.
+6. **Citation line**: "📄 Lead, Senior et al. Journal, year. doi.org/…". Names and the DOI come from PubMed, never from memory.
+7. **Five hashtags at most** (Instagram's hard cap since 18 Dec 2025): one broad (#longevity 3.1M), one or two mid (#healthspan 256K, #sciencenews 246K), one or two specific (#taurine 73K, #longevityscience 67K, #agingresearch 9K).
 
-Emojis are signposts, not decoration: one per line at most, and the same emoji always means the same thing (🔬 finding, 🐭 mice, 👥 people, ⚠️ catch, 📄 paper). No jargon in the hook; save "senolytic" for the second block and explain it there.
+**Emojis: one on the hook, one on the citation line, none elsewhere.** `virality compare` ranked four densities of the same caption: hook-only first, none second, one per block third ("feels more promotional"), heavy last ("a sensational tone, weakening credibility").
+
+**Every carousel is six swipes, 4:5:** hook cover (cinematic photo, the hook in Host Grotesk) → what they did → the explainer card (ARN's X card method, house style, one palette per post) → the catch → why it matters → follow/comment ask. The text slides take the card's palette so the carousel reads as one piece. Every number on every slide is checked against the paper's text before it ships.
 
 **Worked example** (the site's top story on 2 Nov 2026):
 
