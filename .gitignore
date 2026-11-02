@@ -6,3 +6,4 @@ dist/
 build/
 .clinstagram/
 .claude/tsc-cache/
+assets/brand/r1/*.png

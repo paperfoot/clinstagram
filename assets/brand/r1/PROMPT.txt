@@ -1,0 +1,8 @@
+Generate four images with your native image generation tool and save each as a PNG at the exact path given (in this directory). Do not write code to draw them; use image generation, one image per option. After saving, reply with the list of files.
+
+Shared brief for every option: a project title logo with a fully transparent background, wide banner layout (about 4:1). Text, exactly spelled, one word, all caps: "CLINSTAGRAM" (C-L-I-N-S-T-A-G-R-A-M, eleven letters, check the spelling). Style: chunky 3D blocky extruded lettering in the spirit of the Minecraft Java Edition title logo (pixel-textured faces, deep extrusion, dark outline, slight perspective), crisp edges, readable at small size on both light and dark GitHub pages, centered, nothing else in the frame. Transparent PNG background (alpha), no backdrop, no shadow box, no trademarks or real company logos (do not draw the Instagram camera logo). The project is a command-line tool that lets AI agents run Instagram accounts: posting, replying, messaging.
+
+1. logo_a.png: glazed terracotta blocks whose pixel faces run a warm sunset gradient from deep violet through magenta and pink to orange and gold across the word, darker extrusion sides, a soft warm glow on top edges.
+2. logo_b.png: polished white quartz blocks with the front faces inlaid with a magenta-to-orange gradient pixel trim, clean and bright, like a modern build.
+3. logo_c.png: dark blackstone blocks with glowing pink and orange pixel veins running through the faces like live signal lines, warm glow on the edges.
+4. logo_d.png: pink and coral concrete blocks with a subtle pixel noise texture and golden glowstone highlights on the top edges, playful and bold.
