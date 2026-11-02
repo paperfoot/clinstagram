@@ -829,8 +829,10 @@ class PrivateBackend(Backend):
             raise _wrap_error("profile_show", exc)
 
     def profile_edit(self, bio: str | None = None, name: str | None = None,
-                     website: str | None = None) -> dict:
+                     website: str | None = None, username: str | None = None) -> dict:
         fields: dict[str, str] = {}
+        if username is not None:
+            fields["username"] = username.lstrip("@")
         if bio is not None:
             fields["biography"] = bio
         if name is not None:
@@ -838,7 +840,7 @@ class PrivateBackend(Backend):
         if website is not None:
             fields["external_url"] = website
         if not fields:
-            raise ValueError("Nothing to change: pass --bio, --name and/or --website.")
+            raise ValueError("Nothing to change: pass --bio, --name, --username and/or --website.")
         try:
             acc = self._cl.account_edit(**fields)
             if bio == "":

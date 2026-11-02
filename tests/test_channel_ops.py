@@ -108,6 +108,13 @@ class TestPrivateProfile:
         b.profile_edit(bio="")
         cl.account_set_biography.assert_called_once_with("")
 
+    def test_edit_username_strips_at(self):
+        b, cl = _private()
+        cl.account_edit.return_value = _account(biography="x")
+        out = b.profile_edit(username="@agingresearch.news")
+        cl.account_edit.assert_called_once_with(username="agingresearch.news")
+        assert out["updated"] == ["username"]
+
     def test_edit_with_nothing_raises(self):
         b, _ = _private()
         with pytest.raises(ValueError, match="Nothing to change"):
@@ -411,7 +418,7 @@ def test_commands_dispatch(private_cli, args, method, call):
 def test_profile_edit_passes_only_given_fields(private_cli):
     result, backend = private_cli("profile", "edit", "--website", "https://w.test")
     assert result.exit_code == 0, result.output
-    backend.profile_edit.assert_called_with(bio=None, name=None, website="https://w.test")
+    backend.profile_edit.assert_called_with(bio=None, name=None, website="https://w.test", username=None)
 
 
 def test_followers_user_option(private_cli):

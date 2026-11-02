@@ -24,9 +24,10 @@ def edit(
     bio: Optional[str] = typer.Option(None, "--bio", help="New biography (pass \"\" to clear)"),
     name: Optional[str] = typer.Option(None, "--name", help="New display name"),
     website: Optional[str] = typer.Option(None, "--website", help="New website / link in bio"),
+    username: Optional[str] = typer.Option(None, "--username", help="New @handle (Instagram rejects taken names)"),
 ):
-    """Edit bio, display name and/or website. Only the fields you pass change."""
-    dispatch(ctx, Feature.PROFILE_EDIT, lambda b: b.profile_edit(bio=bio, name=name, website=website))
+    """Edit bio, display name, username and/or website. Only the fields you pass change."""
+    dispatch(ctx, Feature.PROFILE_EDIT, lambda b: b.profile_edit(bio=bio, name=name, website=website, username=username))
 
 
 @profile_app.command("picture")

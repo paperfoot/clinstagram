@@ -133,7 +133,7 @@ class Backend(ABC):
         self._unsupported("profile show")
 
     def profile_edit(self, bio: str | None = None, name: str | None = None,
-                     website: str | None = None) -> dict:
+                     website: str | None = None, username: str | None = None) -> dict:
         self._unsupported("profile edit")
 
     def profile_picture(self, media: str) -> dict:
