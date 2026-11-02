@@ -69,7 +69,7 @@ clinstagram auth login         # Private API (username/password/2FA via instagra
 | `hashtag` | `top TAG`, `recent TAG` | |
 | `like` | `post MEDIA`, `undo MEDIA` | Needs `--enable-growth-actions` |
 | `media` | `download MEDIA [--output DIR]`, `likers MEDIA` | Photos, reels, carousels |
-| `profile` | `show`, `edit [--bio] [--name] [--website]`, `picture PATH\|URL\|--remove`, `convert --to creator\|business` | Your own account. Instagram ignores `--website` via API (exit 4); set links in the app |
+| `profile` | `show`, `edit [--bio] [--name] [--username] [--website]`, `picture PATH\|URL\|--remove`, `convert --to creator\|business` | Your own account. Instagram ignores `--website` via API (exit 4); set links in the app |
 | `account` | `list [--check]`, `use NAME`, `remove NAME --yes`, `set-proxy NAME URL\|none` | One login, device and proxy per account. Pick per call with `--account NAME` or `CLINSTAGRAM_ACCOUNT` |
 | `activity` | `activity [--limit N]` | Notifications: follows, likes, comments, mentions, tags |
 | `config` | `show`, `mode MODE`, `set KEY VAL` | Modes: `official-only`, `hybrid-safe`, `private-enabled` |

@@ -1,7 +1,7 @@
 [project]
 name = "clinstagram"
-version = "0.3.4"
-description = "Hybrid Instagram CLI for OpenClaw — Graph API + Private API"
+version = "0.4.0"
+description = "Let your AI agent run your Instagram: post, reply, DMs, insights and multiple accounts from one CLI"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
