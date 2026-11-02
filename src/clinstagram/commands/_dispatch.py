@@ -17,7 +17,7 @@ def make_subgroup(help_text: str) -> typer.Typer:
 
 from clinstagram.auth.keychain import BACKEND_TOKEN_MAP, SecretsStore
 from clinstagram.backends.base import Backend
-from clinstagram.backends.capabilities import Feature, can_backend_do
+from clinstagram.backends.capabilities import READ_ONLY_FEATURES, Feature, can_backend_do
 from clinstagram.backends.router import Router
 from clinstagram.config import ComplianceMode
 from clinstagram.media import cleanup_temp_files, resolve_media
@@ -329,18 +329,29 @@ def dispatch(
     backend_name = resolve_backend_name(ctx, feature, preferred_backend=preferred_backend)
 
     if backend_name is None:
-        # Determine whether it's a policy block or missing backend
+        # Policy block (a configured backend could do it) vs. nothing configured
         config = ctx.obj["config"]
-        if config.compliance_mode == ComplianceMode.OFFICIAL_ONLY:
+        mode = config.compliance_mode
+        blocked = [
+            b for b in ("graph_ig", "graph_fb", "private")
+            if _backend_is_configured(ctx, b) and can_backend_do(b, feature)
+        ]
+        if blocked:
+            # hybrid-safe already unlocks private reads; writes need private-enabled
+            relaxes_enough = mode == ComplianceMode.OFFICIAL_ONLY and feature in READ_ONLY_FEATURES
+            next_mode = "hybrid-safe" if relaxes_enough else "private-enabled"
             output_error(ctx, CLIError(
                 exit_code=ExitCode.POLICY_BLOCKED,
-                error=f"Feature '{feature.value}' is blocked by compliance mode '{config.compliance_mode.value}'",
-                remediation="Run: clinstagram config mode hybrid-safe",
+                error=(
+                    f"Feature '{feature.value}' is blocked by compliance mode '{mode.value}' "
+                    f"(configured backend that supports it: {', '.join(blocked)})"
+                ),
+                remediation=f"Run: clinstagram config mode {next_mode}",
             ))
         else:
             output_error(ctx, CLIError(
                 exit_code=ExitCode.CAPABILITY_UNAVAILABLE,
-                error=f"No backend available for '{feature.value}'",
+                error=f"No configured backend supports '{feature.value}'",
                 remediation="Run: clinstagram auth status  — then connect a backend",
             ))
         return

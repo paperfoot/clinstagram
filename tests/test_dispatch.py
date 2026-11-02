@@ -184,6 +184,44 @@ class TestDispatchPolicyBlocked:
         assert "blocked by compliance mode" in data["error"]
 
 
+class TestUnroutedPolicyMessage:
+    """A configured-but-policy-blocked backend must say so, not 'connect a backend'."""
+
+    def _private_only(self):
+        from clinstagram.auth.keychain import SecretsStore
+
+        secrets = SecretsStore(backend="memory")
+        secrets.set("default", "private_session", "{}")
+        return secrets
+
+    def test_hybrid_safe_write_points_to_private_enabled(self, monkeypatch, tmp_path):
+        secrets = self._private_only()
+        monkeypatch.setattr("clinstagram.commands._dispatch._get_secrets", lambda ctx: secrets)
+        result = runner.invoke(
+            app, ["--json", "--enable-growth-actions", "like", "post", "123"],
+            env={"CLINSTAGRAM_CONFIG_DIR": str(tmp_path), "CLINSTAGRAM_TEST_MODE": "1"},
+        )
+        assert result.exit_code == 6
+        data = json.loads(result.output)
+        assert data["remediation"] == "Run: clinstagram config mode private-enabled"
+
+    def test_official_only_read_points_to_hybrid_safe(self, monkeypatch, tmp_path):
+        secrets = self._private_only()
+        monkeypatch.setattr("clinstagram.commands._dispatch._get_secrets", lambda ctx: secrets)
+        env = {"CLINSTAGRAM_CONFIG_DIR": str(tmp_path), "CLINSTAGRAM_TEST_MODE": "1"}
+        runner.invoke(app, ["config", "mode", "official-only"], env=env)
+        result = runner.invoke(app, ["--json", "user", "info", "nasa"], env=env)
+        assert result.exit_code == 6
+        assert json.loads(result.output)["remediation"] == "Run: clinstagram config mode hybrid-safe"
+
+    def test_nothing_configured_is_capability_unavailable(self, tmp_path):
+        result = runner.invoke(
+            app, ["--json", "user", "info", "nasa"],
+            env={"CLINSTAGRAM_CONFIG_DIR": str(tmp_path), "CLINSTAGRAM_TEST_MODE": "1"},
+        )
+        assert result.exit_code == 7
+
+
 # ── Growth actions gate ──────────────────────────────────────────────
 
 
