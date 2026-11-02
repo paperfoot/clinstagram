@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json as _json
 import re
+import time
 from typing import Any
 
 import httpx
@@ -217,6 +218,34 @@ class GraphBackend(Backend):
     # Posting
     # ------------------------------------------------------------------
 
+    # Meta processes uploaded media asynchronously. Publishing a container that is
+    # still IN_PROGRESS fails (error 9007 for video), so wait for FINISHED first.
+    CONTAINER_POLL_SECONDS = 3.0
+    CONTAINER_TIMEOUT_SECONDS = 300.0
+
+    def _wait_container(self, container_id: str) -> None:
+        sleep = getattr(self, "_sleep", time.sleep)
+        waited = 0.0
+        while True:
+            status = self._get(container_id, {"fields": "status_code,status"})
+            code = (status or {}).get("status_code", "FINISHED")
+            if code in ("FINISHED", "PUBLISHED"):
+                return
+            if code in ("ERROR", "EXPIRED"):
+                detail = (status or {}).get("status") or code
+                raise GraphAPIError(400, "ContainerError", f"Media container {container_id} failed: {detail}")
+            if waited >= self.CONTAINER_TIMEOUT_SECONDS:
+                raise GraphAPIError(
+                    408, "ContainerTimeout",
+                    f"Media container {container_id} still {code} after {int(waited)} s",
+                )
+            sleep(self.CONTAINER_POLL_SECONDS)
+            waited += self.CONTAINER_POLL_SECONDS
+
+    def _publish(self, me: str, container_id: str) -> dict:
+        self._wait_container(container_id)
+        return self._post(f"{me}/media_publish", {"creation_id": container_id})
+
     def post_photo(
         self, media: str, caption: str = "", location: str = "", tags: list[str] | None = None
     ) -> dict:
@@ -236,7 +265,7 @@ class GraphBackend(Backend):
         container_id = container["id"]
 
         # Step 2: publish
-        result = self._post(f"{me}/media_publish", {"creation_id": container_id})
+        result = self._publish(me, container_id)
         return {"id": result["id"], "status": "published"}
 
     def post_video(
@@ -258,7 +287,7 @@ class GraphBackend(Backend):
 
         container = self._post(f"{me}/media", payload)
         container_id = container["id"]
-        result = self._post(f"{me}/media_publish", {"creation_id": container_id})
+        result = self._publish(me, container_id)
         return {"id": result["id"], "status": "published"}
 
     def post_reel(
@@ -280,7 +309,7 @@ class GraphBackend(Backend):
 
         container = self._post(f"{me}/media", payload)
         container_id = container["id"]
-        result = self._post(f"{me}/media_publish", {"creation_id": container_id})
+        result = self._publish(me, container_id)
         return {"id": result["id"], "status": "published"}
 
     def post_carousel(self, media_list: list[str], caption: str = "") -> dict:
@@ -296,6 +325,8 @@ class GraphBackend(Backend):
             if is_video:
                 payload["media_type"] = "VIDEO"
             child = self._post(f"{me}/media", payload)
+            if is_video:
+                self._wait_container(child["id"])
             children_ids.append(child["id"])
 
         # Create the carousel container
@@ -306,7 +337,7 @@ class GraphBackend(Backend):
         if caption:
             carousel_payload["caption"] = caption
         container = self._post(f"{me}/media", carousel_payload)
-        result = self._post(f"{me}/media_publish", {"creation_id": container["id"]})
+        result = self._publish(me, container["id"])
         return {"id": result["id"], "status": "published"}
 
     # ------------------------------------------------------------------
@@ -388,7 +419,7 @@ class GraphBackend(Backend):
 
         container = self._post(f"{me}/media", payload)
         container_id = container["id"]
-        result = self._post(f"{me}/media_publish", {"creation_id": container_id})
+        result = self._publish(me, container_id)
         return {"id": result["id"], "status": "published"}
 
     def story_post_video(
@@ -409,7 +440,7 @@ class GraphBackend(Backend):
 
         container = self._post(f"{me}/media", payload)
         container_id = container["id"]
-        result = self._post(f"{me}/media_publish", {"creation_id": container_id})
+        result = self._publish(me, container_id)
         return {"id": result["id"], "status": "published"}
 
     def story_viewers(self, story_id: str) -> list[dict]:

@@ -101,3 +101,45 @@ def test_dm_send_media_marks_video_attachments_correctly():
 
     assert result["message_id"] == "mid.1"
     assert result["status"] == "sent"
+
+
+def _publishing_backend(statuses):
+    """A Graph backend whose container reports `statuses` in turn on each status poll."""
+    calls: list[str] = []
+    polls = iter(statuses)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/v21.0/me":
+            return httpx.Response(200, json={"id": "42"})
+        if request.method == "POST" and path == "/v21.0/42/media":
+            return httpx.Response(200, json={"id": "c1"})
+        if request.method == "GET" and path == "/v21.0/c1":
+            calls.append("poll")
+            return httpx.Response(200, json={"status_code": next(polls)})
+        if request.method == "POST" and path == "/v21.0/42/media_publish":
+            calls.append("publish")
+            return httpx.Response(200, json={"id": "m1"})
+        raise AssertionError(f"unexpected {request.method} {path}")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    backend = GraphBackend(token="tok", login_type="ig", client=client)
+    backend._sleep = lambda s: None
+    return backend, calls
+
+
+def test_reel_waits_for_container_to_finish_before_publishing():
+    backend, calls = _publishing_backend(["IN_PROGRESS", "IN_PROGRESS", "FINISHED"])
+    result = backend.post_reel("https://example.com/r.mp4", caption="hi")
+    assert result == {"id": "m1", "status": "published"}
+    assert calls == ["poll", "poll", "poll", "publish"]
+
+
+def test_failed_container_is_never_published():
+    import pytest
+    from clinstagram.backends.graph import GraphAPIError
+
+    backend, calls = _publishing_backend(["IN_PROGRESS", "ERROR"])
+    with pytest.raises(GraphAPIError, match="failed"):
+        backend.post_reel("https://example.com/r.mp4")
+    assert "publish" not in calls
