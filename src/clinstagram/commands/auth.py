@@ -61,6 +61,22 @@ def status(ctx: typer.Context):
     output_success(ctx, result)
 
 
+def _graph_username(ctx: typer.Context, backend_name: str, token: str, account: str) -> Optional[str]:
+    """Best-effort: the Instagram username a Graph token acts on (None if it can't be read)."""
+    try:
+        import httpx
+
+        from clinstagram.backends.graph import GraphBackend
+
+        entry = ctx.obj["config"].accounts.get(account)
+        with httpx.Client(timeout=20) as client:
+            gb = GraphBackend(token=token, login_type=backend_name.split("_", 1)[1], client=client,
+                              ig_user_id=getattr(entry, "ig_user_id", None))
+            return gb._get(gb._me_id(), {"fields": "username"}).get("username")
+    except Exception:
+        return None
+
+
 def _store_graph_token(
     ctx: typer.Context,
     backend_name: str,
@@ -84,7 +100,8 @@ def _store_graph_token(
         effective_token = typer.prompt(f"{label} access token", hide_input=True)
 
     secrets.set(account, token_key, effective_token)
-    record_account(ctx, account, add_backend=backend_name)
+    username = _graph_username(ctx, backend_name, effective_token, account)
+    record_account(ctx, account, username=username, add_backend=backend_name)
 
     if not ctx.obj["json"]:
         console.print(f"[green]Stored[/green] {label} token for [bold]{account}[/bold]")
@@ -93,6 +110,7 @@ def _store_graph_token(
         ctx,
         {
             "account": account,
+            "username": username,
             "connected": True,
             "import_method": "manual_token",
         },

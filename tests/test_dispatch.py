@@ -565,3 +565,12 @@ def test_not_found_beats_web_fallback_401():
             raise RuntimeError(f"user_info failed: {e}")
     except RuntimeError as outer:
         assert _classify_error(outer) == "not_found"
+
+
+def test_graph_permission_error_is_final_not_transient():
+    from clinstagram.backends.graph import GraphAPIError
+    from clinstagram.commands._dispatch import _classify_error
+
+    assert _classify_error(GraphAPIError(400, "OAuthException", "(#10) Application does not have permission", code=10)) == "permission"
+    assert _classify_error(GraphAPIError(400, "OAuthException", "(#200) Permissions error", code=200)) == "permission"
+    assert _classify_error(GraphAPIError(400, "OAuthException", "token expired", code=190)) == "auth"

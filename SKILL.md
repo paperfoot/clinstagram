@@ -31,6 +31,26 @@ Output is compact by default: CDN image/video URLs and null fields are left out 
 
 Success envelopes go to stdout; error envelopes go to **stderr** (capture both).
 
+## Accounts: check before you act
+
+```bash
+clinstagram --json account list
+```
+
+Each row: `name` (pass it as `--account NAME`), `username`, `backends`, `ig_user_id`, and `uses`, one line on which API the account goes through and what it can't do. Never guess an account name; the default account is the one with `is_default: true`.
+
+- **Official API (graph_ig / graph_fb):** posts, reels, carousels, stories without link stickers, comments, DMs. Safe. Insights, hashtags and other accounts' profiles need the token to carry those Meta permissions; without them you get exit 7, which is final, not transient.
+- **Private API (private):** everything else (story link stickers, activity, likes, follows, editing or deleting posts, profile edits). It can get an account restricted: pace writes, never change username, name, bio, picture and links in one go, and stop for a day after any 429, feedback_required or challenge.
+- With both, the router uses the official API first and the private API only for what Graph can't do.
+
+Connect the official API with a token from a Meta app (Instagram API use case, "unified login" configuration, the account added as an Instagram Tester):
+
+```bash
+clinstagram --account NAME auth connect-fb --token <EAA… token> --ig-user-id <Instagram user ID shown next to the account in the Meta app>
+```
+
+`--ig-user-id` is needed for these system-user tokens: their `/me` has no Instagram account.
+
 ## Quick Start
 
 ```bash
@@ -47,7 +67,7 @@ clinstagram config mode private-enabled  # Full access, user accepts risk
 
 # Connect backends
 clinstagram auth connect-ig --token ...   # Store Instagram Login token
-clinstagram auth connect-fb --token ...   # Store Facebook Login token
+clinstagram auth connect-fb --token ... [--ig-user-id ID]  # Facebook Login or Meta system-user token
 clinstagram auth login         # Private API (username/password/2FA via instagrapi)
 ```
 

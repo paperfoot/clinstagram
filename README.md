@@ -68,6 +68,19 @@ When something goes wrong, the exit code says what kind of problem it is (bad in
 
 clinstagram reaches Instagram two ways and picks one per command: Meta's official Graph API for Business and Creator accounts, and [instagrapi](https://github.com/subzeroid/instagrapi) for everything the official API can't do. `--backend` forces either.
 
+## The official API
+
+For Business and Creator accounts, connect Meta's official API as well. Posts, reels, comments and DMs then go through it, and the unofficial API is kept for the few things Meta doesn't offer, such as link stickers on stories. That is far less likely to get an account restricted.
+
+You need a Meta developer app with the Instagram API use case, and the account added to it as an Instagram tester. The app's dashboard then gives you a token for that account. Hand it to clinstagram with the account's Instagram ID, which the dashboard shows next to it:
+
+```bash
+clinstagram --account brand auth connect-fb --token <token> --ig-user-id <id>
+clinstagram account list
+```
+
+`account list` shows every account, its username, and in one line what it can and can't do, so an agent always knows which account to use for what.
+
 ## Running a channel
 
 [The news-channel playbook](https://github.com/paperfoot/clinstagram/blob/main/docs/news-channel-playbook.md) lays out a full day for a niche news account: the morning post and story, the comment and DM rounds, the evening numbers, and how to find the people worth reaching. It's written around [AgingResearch.News](https://agingresearch.news), and the routine carries over to any channel.

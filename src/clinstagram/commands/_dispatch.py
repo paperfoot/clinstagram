@@ -38,6 +38,7 @@ _AUTH_TYPES = {
 _NOT_FOUND_TYPES = {"UserNotFound", "MediaNotFound", "ClientNotFoundError", "HashtagNotFound"}
 _GRAPH_RATE_CODES = {4, 17, 32, 613}  # app / user / page / custom rate limits
 _GRAPH_AUTH_CODES = {102, 190}  # session invalid, access token invalid or expired
+_GRAPH_PERMISSION_CODES = {3, 10} | set(range(200, 300))  # app/token lacks the permission
 _RATE_RE = re.compile(r"rate.?limit|request limit|throttl|too many requests|please wait a few minutes|\b429\b", re.I)
 _CHALLENGE_RE = re.compile(r"challenge_required|checkpoint_required|\bchallenge\b", re.I)
 _AUTH_RE = re.compile(
@@ -77,6 +78,8 @@ def _classify_error(exc: BaseException) -> str:
                 return "rate"
             if code in _GRAPH_AUTH_CODES or getattr(cur, "status_code", None) == 401:
                 return "auth"
+            if code in _GRAPH_PERMISSION_CODES:
+                return "permission"
         cur = cur.__cause__ or cur.__context__
     text = str(exc)
     if _RATE_RE.search(text):
@@ -501,10 +504,23 @@ def dispatch(
                 remediation=f"Run: clinstagram config mode {next_mode}",
             ))
         else:
+            account = ctx.obj.get("account") or "default"
+            have = [b for b in ("graph_ig", "graph_fb", "private") if _backend_is_configured(ctx, b)]
+            able = [b for b in ("graph_ig", "graph_fb", "private") if can_backend_do(b, feature)]
+            if not have:
+                remediation = (f"Account '{account}' has no credentials. Run: clinstagram account list, "
+                               f"or connect it: clinstagram --account {account} auth connect-fb --token <token> --ig-user-id <id>")
+            elif able == ["private"]:
+                remediation = (f"Only the private (unofficial) API can do '{feature.value}', and account '{account}' "
+                               f"has only {', '.join(have)}. Use an account that has 'private' (clinstagram account list), "
+                               f"or add it: clinstagram --account {account} auth login -u <username>")
+            else:
+                remediation = (f"Backends that can: {', '.join(able) or 'none'}. Account '{account}' has: "
+                               f"{', '.join(have)}. See: clinstagram account list")
             output_error(ctx, CLIError(
                 exit_code=ExitCode.CAPABILITY_UNAVAILABLE,
-                error=f"No configured backend supports '{feature.value}'",
-                remediation="Run: clinstagram auth status  — then connect a backend",
+                error=f"Account '{account}' can't do '{feature.value}': none of its backends ({', '.join(have) or 'none'}) support it",
+                remediation=remediation,
             ))
         return
 
@@ -569,11 +585,27 @@ def dispatch(
                 error=error_str,
                 challenge_type="unknown",
             ))
+        elif kind == "permission":
+            acct = ctx.obj.get("account") or "default"
+            output_error(ctx, CLIError(
+                exit_code=ExitCode.CAPABILITY_UNAVAILABLE,
+                error=f"Meta refused: the {backend_name} token for '{acct}' lacks the permission for this call ({error_str})",
+                remediation=(
+                    "Not retryable. Insights need instagram_manage_insights; looking up other accounts "
+                    "needs business discovery. Add the permission to the Meta app's login configuration and "
+                    f"regenerate the token, or try: clinstagram --account {acct} --backend private ..."
+                ),
+            ))
         elif kind == "auth":
+            acct = ctx.obj.get("account") or "default"
+            fix = (f"Generate a new token in the Meta app, then: clinstagram --account {acct} auth connect-"
+                   f"{backend_name.split('_', 1)[1]} --token <token>"
+                   if str(backend_name).startswith("graph_")
+                   else f"Run: clinstagram --account {acct} auth login -u <username>")
             output_error(ctx, CLIError(
                 exit_code=ExitCode.AUTH_ERROR,
                 error=error_str,
-                remediation="Run: clinstagram auth login",
+                remediation=fix,
             ))
         else:
             output_error(ctx, CLIError(

@@ -165,6 +165,10 @@ def agent_info():
         },
         "auto_json_when_piped": True,
         "notes_for_agents": {
+            "accounts_first": "Run `clinstagram --json account list` before acting: each row gives the account name to pass as `--account`, its @username, its backends and a `uses` line saying which API it goes through and what it can't do. Never guess an account name.",
+            "official_vs_private": "Accounts with a graph_* backend publish, comment and DM through Meta's official API (safe). The private API (instagrapi) is the only way to do story link stickers, activity, likes, follows, post edits and profile edits, and it can get an account restricted: pace it, never burst identity edits, stop after any 429 or feedback_required.",
+            "graph_media_refs": "On graph backends, media refs accept a Graph media ID, 'latest', or a shortcode/URL of the account's own recent posts. Graph media IDs differ from private-API media pks.",
+            "exit_7_means_stop": "Exit 7 (CAPABILITY_UNAVAILABLE) is never transient: the account lacks a backend or the token lacks a Meta permission. Read `remediation`; don't retry.",
             "json_flag_position": "`--json` must come BEFORE the subcommand (e.g. `clinstagram --json user posts @someuser`). Not strictly required if stdout is piped; clinstagram auto-enables JSON when not a TTY.",
             "growth_gate": "Follow/unfollow/like/comment require --enable-growth-actions and compliance_mode != hybrid-safe.",
             "backend_auto_select": "Omit --backend to let the router pick. Use --backend private only when needed.",

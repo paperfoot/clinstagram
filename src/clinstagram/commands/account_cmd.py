@@ -69,7 +69,9 @@ def list_accounts(
         rows.append({
             "name": name,
             "username": entry.username if entry else None,
+            "ig_user_id": getattr(entry, "ig_user_id", None) if entry else None,
             "backends": backends,
+            "uses": _uses(backends),
             "proxy": redact_proxy(entry.proxy) if entry else None,
             "is_default": name == config.default_account,
         })
@@ -82,8 +84,25 @@ def list_accounts(
             user = f"@{r['username']}" if r["username"] else "-"
             proxy = f"  proxy={r['proxy']}" if r["proxy"] else ""
             typer.echo(f"{mark} {r['name']:<16} {user:<24} {','.join(r['backends']) or 'no credentials'}{proxy}")
+            typer.echo(f"  {'':<16} {r['uses']}")
         return
     output_success(ctx, rows)
+
+
+def _uses(backends: list[str]) -> str:
+    """One line an agent can act on: which API this account goes through, and what it can't do."""
+    official = any(b.startswith("graph_") for b in backends)
+    private = "private" in backends
+    if official and private:
+        return ("official API first (posts, reels, carousels, comments, DMs); unofficial API for what it can't "
+                "do: story link stickers, activity, likes, follows, editing or deleting posts, profile edits")
+    if official:
+        return ("official API only: posts, reels, carousels, stories without link stickers, comments, DMs. "
+                "Insights, hashtags and other accounts' profiles need extra token permissions. Can't: activity, "
+                "likes, follows, edit or delete posts, profile edits")
+    if private:
+        return "unofficial API only: everything, at higher risk of restrictions; pace writes"
+    return "no credentials"
 
 
 def _require_known(ctx: typer.Context, name: str) -> bool:
