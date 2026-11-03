@@ -336,10 +336,18 @@ class TestGraphChannelOps:
         ]}})
         assert g.analytics_insights("777") == {"media_id": "777", "insights": {"reach": 12, "saved": 3}}
 
-    def test_media_insights_rejects_shortcode(self):
-        g = _graph({})
-        with pytest.raises(ValueError, match="numeric media ID"):
-            g.analytics_insights("DfPQchkG1tg")
+    def test_media_insights_resolves_own_shortcode(self):
+        g = _graph({
+            "/555/media": {"data": [{"id": "901", "shortcode": "DfPQchkG1tg",
+                                     "permalink": "https://www.instagram.com/p/DfPQchkG1tg/"}]},
+            "/901/insights": {"data": [{"name": "reach", "values": [{"value": 5}]}]},
+        })
+        assert g.analytics_insights("https://www.instagram.com/p/DfPQchkG1tg/")["media_id"] == "901"
+
+    def test_media_ref_outside_own_posts_points_to_private(self):
+        g = _graph({"/555/media": {"data": []}})
+        with pytest.raises(ValueError, match="--backend private"):
+            g.analytics_insights("SomeoneElse1")
 
     def test_account_insights(self):
         g = _graph({"/555/insights": {"data": [{"name": "reach", "total_value": {"value": 99}}]}})

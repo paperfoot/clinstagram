@@ -235,6 +235,42 @@ class GraphBackend(Backend):
             self._me_id_cache = iba
         return self._me_id_cache
 
+    _SHORTCODE_RE = re.compile(r"(?:instagram\.com/(?:p|reel|reels|tv)/)?([A-Za-z0-9_-]{5,})/?(?:\?.*)?$")
+
+    def _media_ref(self, ref: str) -> str:
+        """Graph media ID for 'latest', a numeric Graph ID, a shortcode or a post URL.
+
+        Graph IDs differ from the private API's media pk, so shortcodes and URLs are
+        matched against this account's own recent media (Graph can't look up others').
+        """
+        ref = (ref or "").strip()
+        me = self._me_id()
+        if ref == "latest":
+            items = self._get(f"{me}/media", {"fields": "id", "limit": "1"}).get("data", [])
+            if not items:
+                raise ValueError("No posts found for the current account")
+            return str(items[0]["id"])
+        if ref.isdigit():
+            return ref
+        m = self._SHORTCODE_RE.search(ref)
+        code = m.group(1) if m else ref
+        after = None
+        for _ in range(4):  # up to ~200 recent posts
+            params = {"fields": "id,shortcode,permalink", "limit": "50"}
+            if after:
+                params["after"] = after
+            page = self._get(f"{me}/media", params) or {}
+            for item in page.get("data", []):
+                if item.get("shortcode") == code or f"/{code}/" in (item.get("permalink") or ""):
+                    return str(item["id"])
+            after = ((page.get("paging") or {}).get("cursors") or {}).get("after")
+            if not after or not (page.get("paging") or {}).get("next"):
+                break
+        raise ValueError(
+            f"Post '{ref}' isn't among this account's recent posts. The Graph API only "
+            "resolves shortcodes and URLs of your own media; for anyone else's use --backend private."
+        )
+
     # ------------------------------------------------------------------
     # Posting
     # ------------------------------------------------------------------
@@ -474,6 +510,7 @@ class GraphBackend(Backend):
     # ------------------------------------------------------------------
 
     def comments_list(self, media_id: str, limit: int = 50) -> list[dict]:
+        media_id = self._media_ref(media_id)
         params = {
             "fields": "id,text,from,timestamp",
             "limit": str(limit),
@@ -501,13 +538,7 @@ class GraphBackend(Backend):
         return self._normalize_user(self._get(me, params))
 
     def analytics_post(self, media_id: str) -> dict:
-        if media_id == "latest":
-            me = self._me_id()
-            latest = self._get(f"{me}/media", {"fields": "id", "limit": "1"})
-            items = latest.get("data", [])
-            if not items:
-                raise ValueError("No posts found for the current account")
-            media_id = str(items[0]["id"])
+        media_id = self._media_ref(media_id)
         params = {
             "fields": "id,caption,like_count,comments_count,timestamp,media_type,media_product_type,media_url,thumbnail_url,permalink,shortcode,children{id,media_type,media_url}",
         }
@@ -541,11 +572,7 @@ class GraphBackend(Backend):
         return out
 
     def analytics_insights(self, media_ref: str) -> dict:
-        if not media_ref.isdigit():
-            raise ValueError(
-                "The Graph API needs its own numeric media ID (from 'user posts' or "
-                "'analytics post'); shortcodes and URLs work only with --backend private."
-            )
+        media_ref = self._media_ref(media_ref)
         data = self._get(f"{media_ref}/insights", {"metric": self._MEDIA_INSIGHT_METRICS})
         return {"media_id": media_ref, "insights": self._flatten_insights(data)}
 
@@ -653,6 +680,7 @@ class GraphBackend(Backend):
         )
 
     def comments_add(self, media_id: str, text: str) -> dict:
+        media_id = self._media_ref(media_id)
         result = self._post(f"{media_id}/comments", {"message": text})
         return {"id": result["id"], "status": "commented"}
 
