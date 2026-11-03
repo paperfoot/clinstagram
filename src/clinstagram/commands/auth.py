@@ -113,8 +113,20 @@ def connect_ig(
 def connect_fb(
     ctx: typer.Context,
     token: Optional[str] = typer.Option(None, "--token", help="Facebook Login access token to store"),
+    ig_user_id: Optional[str] = typer.Option(
+        None, "--ig-user-id",
+        help="Instagram user ID the token acts on. Needed for system-user tokens from Meta's unified login, whose /me has no Instagram account",
+    ),
 ):
     """Store a Facebook Login access token for the Graph API."""
+    if ig_user_id:
+        from clinstagram.config import AccountEntry, save_config
+        config = ctx.obj["config"]
+        account = ctx.obj["account"]
+        entry = config.accounts.get(account) or AccountEntry()
+        entry.ig_user_id = ig_user_id.strip()
+        config.accounts[account] = entry
+        save_config(config, ctx.obj.get("config_dir"))
     _store_graph_token(ctx, "graph_fb", token, "Facebook Login")
 
 

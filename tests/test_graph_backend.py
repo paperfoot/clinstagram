@@ -5,7 +5,8 @@ from urllib.parse import parse_qs
 
 import httpx
 
-from clinstagram.backends.graph import GraphBackend
+import pytest
+from clinstagram.backends.graph import GraphAPIError, GraphBackend
 
 
 def test_analytics_profile_is_normalized():
@@ -143,3 +144,26 @@ def test_failed_container_is_never_published():
     with pytest.raises(GraphAPIError, match="failed"):
         backend.post_reel("https://example.com/r.mp4")
     assert "publish" not in calls
+
+
+def test_fb_token_uses_linked_instagram_account():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v21.0/me":
+            return httpx.Response(200, json={"id": "page1", "instagram_business_account": {"id": "ig9"}})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    backend = GraphBackend(token="tok", login_type="fb", client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert backend._me_id() == "ig9"
+
+
+def test_system_user_token_needs_stored_ig_user_id():
+    # Meta's unified-login system-user token: /me has no id at all.
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v21.0/me":
+            return httpx.Response(200, json={})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(GraphAPIError, match="--ig-user-id"):
+        GraphBackend(token="tok", login_type="fb", client=client)._me_id()
+    assert GraphBackend(token="tok", login_type="fb", client=client, ig_user_id="1784")._me_id() == "1784"

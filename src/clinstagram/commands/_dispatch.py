@@ -218,7 +218,9 @@ def _instantiate_backend(ctx: typer.Context, backend_name: str, feature: Feature
         from clinstagram.backends.graph import GraphBackend
 
         token = secrets.get(account, "graph_fb_token")
-        return GraphBackend(token=token, login_type="fb", client=_get_http_client(ctx))
+        entry = ctx.obj["config"].accounts.get(account)
+        return GraphBackend(token=token, login_type="fb", client=_get_http_client(ctx),
+                            ig_user_id=getattr(entry, "ig_user_id", None))
 
     if backend_name == "private":
         from instagrapi import Client

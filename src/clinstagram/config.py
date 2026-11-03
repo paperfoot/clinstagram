@@ -108,6 +108,7 @@ class AccountEntry(_Model):
     username: Optional[str] = None
     proxy: Optional[str] = None
     backends: list = field(default_factory=list)  # configured backends, e.g. ["private"]
+    ig_user_id: Optional[str] = None  # IG user for Facebook-login / system-user Graph tokens
 
     def _coerce(self, name: str, value: Any) -> Any:
         if name == "proxy":

@@ -57,14 +57,14 @@ class GraphBackend(Backend):
         "fb": "https://graph.facebook.com/v21.0",
     }
 
-    def __init__(self, token: str, login_type: str, client: httpx.Client):
+    def __init__(self, token: str, login_type: str, client: httpx.Client, ig_user_id: str | None = None):
         if login_type not in self.BASE_URLS:
             raise ValueError(f"login_type must be 'ig' or 'fb', got '{login_type}'")
         self._token = token
         self._login_type = login_type
         self._client = client
         self._base = self.BASE_URLS[login_type]
-        self._me_id_cache: str | None = None
+        self._me_id_cache: str | None = ig_user_id or None
 
     # ------------------------------------------------------------------
     # Helpers
@@ -209,9 +209,30 @@ class GraphBackend(Backend):
             )
 
     def _me_id(self) -> str:
+        """The Instagram user ID that the IG endpoints act on.
+
+        Instagram Login tokens: /me is the IG user. Facebook Login tokens: /me is a
+        person, Page or system user, so look for the linked instagram_business_account.
+        A system-user token (Meta's "unified login") has no /me id at all; it needs the
+        IG user ID stored with `auth connect-fb --ig-user-id`.
+        """
         if self._me_id_cache is None:
-            data = self._get("me", {"fields": "id"})
-            self._me_id_cache = data["id"]
+            if self._login_type == "ig":
+                self._me_id_cache = self._get("me", {"fields": "id"})["id"]
+                return self._me_id_cache
+            me = self._get("me", {"fields": "id,instagram_business_account"}) or {}
+            iba = (me.get("instagram_business_account") or {}).get("id")
+            if not iba and me.get("id"):
+                # A Page or user token with no linked account in /me: keep the old
+                # behaviour and act on /me itself.
+                iba = me["id"]
+            if not iba:
+                raise GraphAPIError(
+                    400, "NoInstagramAccount",
+                    "This Facebook token isn't linked to an Instagram account. "
+                    "Run: clinstagram auth connect-fb --token <token> --ig-user-id <id>",
+                )
+            self._me_id_cache = iba
         return self._me_id_cache
 
     # ------------------------------------------------------------------
