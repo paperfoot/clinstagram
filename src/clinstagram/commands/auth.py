@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import shlex
 import sys
 from typing import Optional
 
@@ -61,15 +62,20 @@ def status(ctx: typer.Context):
     output_success(ctx, result)
 
 
+def _graph_client() -> "httpx.Client":
+    """HTTP client for live Graph checks (tests swap in an httpx.MockTransport)."""
+    import httpx
+
+    return httpx.Client(timeout=20)
+
+
 def _graph_username(ctx: typer.Context, backend_name: str, token: str, account: str) -> Optional[str]:
     """Best-effort: the Instagram username a Graph token acts on (None if it can't be read)."""
     try:
-        import httpx
-
         from clinstagram.backends.graph import GraphBackend
 
         entry = ctx.obj["config"].accounts.get(account)
-        with httpx.Client(timeout=20) as client:
+        with _graph_client() as client:
             gb = GraphBackend(token=token, login_type=backend_name.split("_", 1)[1], client=client,
                               ig_user_id=getattr(entry, "ig_user_id", None))
             return gb._get(gb._me_id(), {"fields": "username"}).get("username")
@@ -77,30 +83,71 @@ def _graph_username(ctx: typer.Context, backend_name: str, token: str, account: 
         return None
 
 
-def _store_graph_token(
-    ctx: typer.Context,
-    backend_name: str,
-    token: Optional[str],
-    label: str,
-) -> None:
+def _reconnect_hint(backend_name: str, account: str, ig_user_id: Optional[str] = None) -> str:
+    """The command that stores a token for this account without putting it on the command line."""
+    suffix = backend_name.split("_", 1)[1]
+    cmd = f"pbpaste | clinstagram --account {shlex.quote(account)} auth connect-{suffix} --token-stdin"
+    if suffix == "fb":
+        cmd += f" --ig-user-id {ig_user_id or '<id>'}"
+    return cmd
+
+
+def _read_token_stdin(ctx: typer.Context, hint: str) -> str:
+    """The token piped on stdin, stripped of surrounding whitespace."""
+    stream = sys.stdin
+    if stream is None or stream.isatty():
+        # A terminal would wait for Ctrl-D and show the token as it's typed.
+        output_error(ctx, CLIError(
+            exit_code=ExitCode.USER_ERROR,
+            error="--token-stdin reads the token from a pipe, and nothing is piped in",
+            remediation=f"Pipe it in: {hint}",
+        ))
+    token = stream.read().strip()
+    if not token:
+        output_error(ctx, CLIError(
+            exit_code=ExitCode.USER_ERROR,
+            error="No token on stdin",
+            remediation=f"Copy the token, then run: {hint}",
+        ))
+    if any(ch.isspace() for ch in token):
+        # Never a token (e.g. "Bearer EAA..." or a multi-line clipboard); storing it
+        # would replace a working token with a broken one.
+        output_error(ctx, CLIError(
+            exit_code=ExitCode.USER_ERROR,
+            error="What's on stdin isn't a single token: it has spaces or line breaks inside",
+            remediation=f"Copy only the token, then run: {hint}",
+        ))
+    return token
+
+
+def _resolve_token(
+    ctx: typer.Context, token: Optional[str], token_stdin: bool, label: str, hint: str,
+) -> str:
+    """The token from --token, --token-stdin or a hidden prompt; exits 1 if there is none."""
+    if token_stdin and token is not None:
+        output_error(ctx, CLIError(
+            exit_code=ExitCode.USER_ERROR,
+            error="Pass the token with --token or --token-stdin, not both",
+            remediation=f"Use stdin, which keeps the token out of ps and shell history: {hint}",
+        ))
+    if token_stdin:
+        return _read_token_stdin(ctx, hint)
+    if token:
+        return token
+    if ctx.obj["json"]:
+        output_error(ctx, CLIError(
+            exit_code=ExitCode.USER_ERROR,
+            error=f"{label} access token is required",
+            remediation=f"Pipe it in: {hint}",
+        ))
+    return typer.prompt(f"{label} access token", hide_input=True)
+
+
+def _store_graph_token(ctx: typer.Context, backend_name: str, token: str, label: str) -> None:
     account = ctx.obj["account"]
     secrets = _get_secrets(ctx)
-    token_key = f"{backend_name}_token"
-    effective_token = token
-    if not effective_token:
-        if ctx.obj["json"]:
-            output_error(
-                ctx,
-                CLIError(
-                    exit_code=ExitCode.USER_ERROR,
-                    error=f"{label} access token is required",
-                    remediation=f"Run: clinstagram auth connect-{backend_name.split('_', 1)[1]} --token <token>",
-                ),
-            )
-        effective_token = typer.prompt(f"{label} access token", hide_input=True)
-
-    secrets.set(account, token_key, effective_token)
-    username = _graph_username(ctx, backend_name, effective_token, account)
+    secrets.set(account, f"{backend_name}_token", token)
+    username = _graph_username(ctx, backend_name, token, account)
     record_account(ctx, account, username=username, add_backend=backend_name)
 
     if not ctx.obj["json"]:
@@ -118,34 +165,55 @@ def _store_graph_token(
     )
 
 
+_TOKEN_STDIN_HELP = (
+    "Read the token from stdin, which keeps it out of ps and shell history, e.g. "
+    "pbpaste | clinstagram auth {cmd} --token-stdin"
+)
+
+
 @auth_app.command("connect-ig")
 def connect_ig(
     ctx: typer.Context,
-    token: Optional[str] = typer.Option(None, "--token", help="Instagram Login access token to store"),
+    token: Optional[str] = typer.Option(
+        None, "--token",
+        help="Instagram Login access token to store (visible in ps and shell history; prefer --token-stdin)",
+    ),
+    token_stdin: bool = typer.Option(False, "--token-stdin", help=_TOKEN_STDIN_HELP.format(cmd="connect-ig")),
 ):
     """Store an Instagram Login access token for the Graph API."""
-    _store_graph_token(ctx, "graph_ig", token, "Instagram Login")
+    hint = _reconnect_hint("graph_ig", ctx.obj["account"])
+    value = _resolve_token(ctx, token, token_stdin, "Instagram Login", hint)
+    _store_graph_token(ctx, "graph_ig", value, "Instagram Login")
 
 
 @auth_app.command("connect-fb")
 def connect_fb(
     ctx: typer.Context,
-    token: Optional[str] = typer.Option(None, "--token", help="Facebook Login access token to store"),
+    token: Optional[str] = typer.Option(
+        None, "--token",
+        help="Facebook Login access token to store (visible in ps and shell history; prefer --token-stdin)",
+    ),
+    token_stdin: bool = typer.Option(
+        False, "--token-stdin", help=_TOKEN_STDIN_HELP.format(cmd="connect-fb") + " --ig-user-id <id>",
+    ),
     ig_user_id: Optional[str] = typer.Option(
         None, "--ig-user-id",
         help="Instagram user ID the token acts on. Needed for system-user tokens from Meta's unified login, whose /me has no Instagram account",
     ),
 ):
     """Store a Facebook Login access token for the Graph API."""
+    config = ctx.obj["config"]
+    account = ctx.obj["account"]
+    known_ig = (ig_user_id or "").strip() or getattr(config.accounts.get(account), "ig_user_id", None)
+    # Get the token before saving anything, so a refused call leaves --ig-user-id unapplied.
+    value = _resolve_token(ctx, token, token_stdin, "Facebook Login", _reconnect_hint("graph_fb", account, known_ig))
     if ig_user_id:
         from clinstagram.config import AccountEntry, save_config
-        config = ctx.obj["config"]
-        account = ctx.obj["account"]
         entry = config.accounts.get(account) or AccountEntry()
         entry.ig_user_id = ig_user_id.strip()
         config.accounts[account] = entry
         save_config(config, ctx.obj.get("config_dir"))
-    _store_graph_token(ctx, "graph_fb", token, "Facebook Login")
+    _store_graph_token(ctx, "graph_fb", value, "Facebook Login")
 
 
 @auth_app.command("login")
