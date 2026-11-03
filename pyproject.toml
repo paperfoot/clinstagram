@@ -42,3 +42,6 @@ build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Test this checkout's src, not whatever clinstagram the environment has installed
+# (a non-editable copy, or an editable install of another checkout or worktree).
+pythonpath = ["src"]
