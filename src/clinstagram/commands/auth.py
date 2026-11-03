@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 import shlex
 import sys
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import typer
 
 from clinstagram.auth.keychain import SecretsStore
 from clinstagram.backends.capabilities import CAPABILITY_MATRIX
 from clinstagram.commands._dispatch import (
+    _classify_error,
     configured_backends,
     forget_account,
     make_subgroup,
@@ -21,6 +23,12 @@ from clinstagram.commands._dispatch import (
 from clinstagram.models import CLIError, ExitCode
 
 from clinstagram._console import console
+
+if TYPE_CHECKING:
+    import httpx
+
+    from clinstagram.backends.graph import GraphAPIError
+
 auth_app = make_subgroup("Manage authentication (Graph & Private)")
 
 
@@ -62,25 +70,32 @@ def status(ctx: typer.Context):
     output_success(ctx, result)
 
 
-def _graph_client() -> "httpx.Client":
+def _graph_client() -> httpx.Client:
     """HTTP client for live Graph checks (tests swap in an httpx.MockTransport)."""
     import httpx
 
-    return httpx.Client(timeout=20)
+    return httpx.Client(timeout=15)
 
 
-def _graph_username(ctx: typer.Context, backend_name: str, token: str, account: str) -> Optional[str]:
-    """Best-effort: the Instagram username a Graph token acts on (None if it can't be read)."""
-    try:
-        from clinstagram.backends.graph import GraphBackend
+# Meta's answers when an account's authorization of the app is broken. Seen on
+# 3 Nov 2026 after Instagram's Boost flow linked @agingresearch.news to Facebook:
+# the profile still read, while the media list failed and media_count read 0.
+_BROKEN_APP_AUTH = re.compile(
+    r"API access blocked|Application does not have permission|Cannot call API for app", re.I,
+)
+_NEW_TOKEN_STEPS = (
+    "Meta app dashboard → Instagram API → API setup with Unified login → "
+    "2. Generate access tokens → Generate token on the account's row"
+)
 
-        entry = ctx.obj["config"].accounts.get(account)
-        with _graph_client() as client:
-            gb = GraphBackend(token=token, login_type=backend_name.split("_", 1)[1], client=client,
-                              ig_user_id=getattr(entry, "ig_user_id", None))
-            return gb._get(gb._me_id(), {"fields": "username"}).get("username")
-    except Exception:
-        return None
+
+def _redact(text: str, token: str) -> str:
+    """Meta and httpx errors shouldn't carry the token; make sure none ever does.
+
+    Real tokens run to hundreds of characters; replacing a one-letter "token"
+    would only garble the message.
+    """
+    return text.replace(token, "<token>") if len(token) >= 8 else text
 
 
 def _reconnect_hint(backend_name: str, account: str, ig_user_id: Optional[str] = None) -> str:
@@ -90,6 +105,105 @@ def _reconnect_hint(backend_name: str, account: str, ig_user_id: Optional[str] =
     if suffix == "fb":
         cmd += f" --ig-user-id {ig_user_id or '<id>'}"
     return cmd
+
+
+def _verdict(exc: GraphAPIError, ig_unknown: bool) -> str:
+    """What a Graph refusal means for a token: broken | no_ig | transient | token | refused."""
+    if _BROKEN_APP_AUTH.search(str(exc)):
+        return "broken"
+    if ig_unknown and (exc.code == 100 or exc.error_type == "NoInstagramAccount"):
+        return "no_ig"
+    kind = _classify_error(exc)
+    if kind == "rate" or exc.status_code >= 500 or exc.code in (1, 2):
+        return "transient"  # says nothing about the token
+    if kind == "auth":
+        return "token"
+    return "refused"
+
+
+def _remediation(verdict: str, backend_name: str, account: str, ig_user_id: Optional[str]) -> str:
+    if verdict == "no_ig":
+        return ("This token isn't linked to an Instagram account. Store it with the ID of the "
+                f"Instagram account it acts on: {_reconnect_hint(backend_name, account)}")
+    reason = {
+        "broken": ("This account's authorization of the Meta app is broken (seen after Instagram's "
+                   "Boost flow linked the account to Facebook); a new token fixes it."),
+        "token": "Meta rejected the token as invalid or expired.",
+    }.get(verdict, "Meta refused the check: the token may belong to another account or lack a permission.")
+    return (f"{reason} Make a new token ({_NEW_TOKEN_STEPS}), then store it: "
+            f"{_reconnect_hint(backend_name, account, ig_user_id)}")
+
+
+def _verify_graph_token(ctx: typer.Context, backend_name: str, token: str, account: str) -> dict[str, Any]:
+    """Check a Graph token live, on the account the commands will act on. Never raises.
+
+    `verified` is True when the token reads its identity, the Instagram account and
+    that account's media list; False when Meta refuses (with a `remediation`); None
+    when Meta couldn't be asked (network, rate limit, server error), with a `note`.
+    """
+    from clinstagram.backends.graph import GraphAPIError, GraphBackend
+
+    login_type = backend_name.split("_", 1)[1]
+    entry = ctx.obj["config"].accounts.get(account)
+    # Resolve the account the way _dispatch._instantiate_backend does.
+    ig_id = (getattr(entry, "ig_user_id", None) or None) if login_type == "fb" else None
+    ig_unknown = login_type == "fb" and not ig_id
+    probe_cmd = f"clinstagram --account {shlex.quote(account)} auth probe"
+    out: dict[str, Any] = {"verified": None}
+    step = "identity"
+    try:
+        with _graph_client() as client:
+            gb = GraphBackend(token=token, login_type=login_type, client=client, ig_user_id=ig_id)
+            me = gb._get("me", {"fields": "id,name"}) or {}
+            me_id = str(me["id"]) if me.get("id") is not None else None
+            out["identity"] = {"id": me_id, "name": me.get("name")}
+            step = "account"
+            if not ig_id:
+                # Instagram Login: /me is the Instagram account itself.
+                ig_id = me_id if login_type == "ig" and me_id else str(gb._me_id())
+            out["ig_user_id"] = ig_id
+            step = "profile"
+            profile = gb._get(ig_id, {"fields": "username,media_count"}) or {}
+            out["username"] = profile.get("username")
+            out["media_count"] = profile.get("media_count")
+            # The profile can read fine while Meta refuses the media list, so only
+            # this read tells a working token from a broken one.
+            step = "media"
+            gb._get(f"{ig_id}/media", {"fields": "id", "limit": "1"})
+            out["media_access"] = True
+            out["verified"] = True
+    except GraphAPIError as exc:
+        # Past /me, a missing-object error on an unknown account means there's no linked one.
+        verdict = _verdict(exc, ig_unknown and step != "identity")
+        out["verify_error"] = _redact(str(exc), token)
+        if verdict == "transient":
+            out["note"] = ("Meta couldn't answer the check just now (rate limit or server error). "
+                           f"The token is stored; check it later: {probe_cmd}")
+        else:
+            out["verified"] = False
+            if step == "media":
+                out["media_access"] = False
+            out["remediation"] = _remediation(verdict, backend_name, account, ig_id)
+    except Exception as exc:  # network failure, timeout, an answer that isn't JSON
+        out["verify_error"] = _redact(f"{type(exc).__name__}: {exc}", token)
+        out["note"] = ("Couldn't check the token with Meta (network error or unexpected answer). "
+                       f"The token is stored; check it later: {probe_cmd}")
+    return out
+
+
+def _print_check(check: dict[str, Any], username: Optional[str]) -> None:
+    from rich.markup import escape
+
+    if check["verified"]:
+        who = f"@{username}" if username else check.get("ig_user_id")
+        posts = check.get("media_count")
+        console.print(f"[green]Verified:[/green] reads {escape(str(who))} and its media"
+                      + (f" ({posts} posts)" if posts is not None else ""))
+    elif check["verified"] is False:
+        console.print(f"[yellow]Warning:[/yellow] Meta refused the token: {escape(check['verify_error'])}")
+        console.print(f"[yellow]Fix:[/yellow] {escape(check['remediation'])}")
+    else:
+        console.print(f"[yellow]Not verified:[/yellow] {escape(check['note'])}")
 
 
 def _read_token_stdin(ctx: typer.Context, hint: str) -> str:
@@ -147,11 +261,15 @@ def _store_graph_token(ctx: typer.Context, backend_name: str, token: str, label:
     account = ctx.obj["account"]
     secrets = _get_secrets(ctx)
     secrets.set(account, f"{backend_name}_token", token)
-    username = _graph_username(ctx, backend_name, token, account)
+    # Stored before the check: a failed or impossible check is reported, and the
+    # token is kept either way (exit 0).
+    check = _verify_graph_token(ctx, backend_name, token, account)
+    username = check.pop("username", None)
     record_account(ctx, account, username=username, add_backend=backend_name)
 
     if not ctx.obj["json"]:
         console.print(f"[green]Stored[/green] {label} token for [bold]{account}[/bold]")
+        _print_check(check, username)
         return
     output_success(
         ctx,
@@ -160,6 +278,7 @@ def _store_graph_token(ctx: typer.Context, backend_name: str, token: str, label:
             "username": username,
             "connected": True,
             "import_method": "manual_token",
+            **check,
         },
         backend_used=backend_name,
     )

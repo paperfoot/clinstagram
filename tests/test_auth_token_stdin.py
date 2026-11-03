@@ -1,4 +1,7 @@
-"""auth connect-ig / connect-fb --token-stdin. Meta is faked; no network, no real tokens."""
+"""auth connect-ig / connect-fb --token-stdin and the live token check after storing.
+
+Meta is faked with httpx.MockTransport; no network, no real tokens.
+"""
 from __future__ import annotations
 
 import io
@@ -65,8 +68,18 @@ def meta(monkeypatch):
     return fake
 
 
-def _auth(env, *args, stdin=None):
-    return runner.invoke(app, ["--json", "--account", "news", "auth", *args], input=stdin, env=env)
+def _auth(env, *args, stdin=None, full=False):
+    flags = ["--json", "--full"] if full else ["--json"]
+    return runner.invoke(app, [*flags, "--account", "news", "auth", *args], input=stdin, env=env)
+
+
+def _connect_fb(env, full=False):
+    return _auth(env, "connect-fb", "--token-stdin", "--ig-user-id", IG, stdin=TOKEN + "\n", full=full)
+
+
+def _data(result):
+    assert result.exit_code == 0, result.output
+    return json.loads(result.stdout)["data"]
 
 
 def test_stdin_token_is_stored_stripped_and_never_echoed(env, secrets, meta, tmp_path):
@@ -155,3 +168,127 @@ def test_token_flag_still_works(env, secrets, meta):
     assert r.exit_code == 0, r.output
     assert secrets.get("news", "graph_fb_token") == TOKEN
     assert json.loads(r.stdout)["data"]["username"] == "agingresearch.news"
+
+
+# --- live check after storing ----------------------------------------------------
+
+NEW_TOKEN_STEPS = (
+    "Meta app dashboard → Instagram API → API setup with Unified login → "
+    "2. Generate access tokens → Generate token on the account's row"
+)
+RECONNECT = f"pbpaste | clinstagram --account news auth connect-fb --token-stdin --ig-user-id {IG}"
+
+
+def test_connect_reports_identity_and_media_access(env, secrets, meta):
+    data = _data(_connect_fb(env))
+    assert data["verified"] is True
+    assert data["identity"] == {"id": "sys-1", "name": "ARN agent"}
+    assert data["ig_user_id"] == IG
+    assert data["username"] == "agingresearch.news"
+    assert data["media_count"] == 12
+    assert data["media_access"] is True
+    assert "remediation" not in data and "note" not in data
+    assert [q.url.path for q in meta.requests] == ["/v21.0/me", f"/v21.0/{IG}", f"/v21.0/{IG}/media"]
+    assert meta.requests[0].url.params["fields"] == "id,name"
+    assert meta.requests[-1].url.params["limit"] == "1"
+
+
+def test_connect_ig_checks_the_instagram_account_behind_me(env, secrets, meta):
+    meta.routes["/v21.0/me"] = (200, {"id": IG, "name": "AgingResearch.News"})
+    data = _data(_auth(env, "connect-ig", "--token-stdin", stdin=TOKEN))
+    assert data["verified"] is True and data["ig_user_id"] == IG and data["media_access"] is True
+    assert [q.url.host for q in meta.requests] == ["graph.instagram.com"] * 3  # /me read once
+
+
+@pytest.mark.parametrize("message,code", [
+    ("(#200) API access blocked", 200),
+    ("(#10) Application does not have permission for this action", 10),
+    ("Cannot call API for app 1234567890 on behalf of user 9876543210", 200),
+])
+def test_media_refused_after_boost_is_flagged_and_the_token_kept(env, secrets, meta, tmp_path, message, code):
+    # 3 Nov 2026: the profile kept reading (media_count 0) while the media list failed.
+    meta.routes[f"/v21.0/{IG}"] = (200, {"id": IG, "username": "agingresearch.news", "media_count": 0})
+    meta.refuse(f"/v21.0/{IG}/media", message, code)
+    data = _data(_connect_fb(env))
+    assert data["connected"] is True
+    assert data["verified"] is False
+    assert data["media_access"] is False
+    assert data["media_count"] == 0
+    assert data["verify_error"] == message
+    fix = data["remediation"]
+    assert "authorization of the Meta app is broken" in fix and "Boost flow" in fix
+    assert NEW_TOKEN_STEPS in fix
+    assert fix.endswith(RECONNECT)
+    assert secrets.get("news", "graph_fb_token") == TOKEN  # never deleted
+    assert load_config(tmp_path).accounts["news"].backends == ["graph_fb"]
+
+
+def test_network_failure_during_the_check_still_stores(env, secrets, meta, tmp_path):
+    meta.routes["/v21.0/me"] = httpx.ConnectError("[Errno 8] nodename nor servname provided")
+    data = _data(_connect_fb(env, full=True))
+    assert data["connected"] is True
+    assert "verified" in data and data["verified"] is None
+    assert data["verify_error"].startswith("ConnectError: ")
+    assert "token is stored" in data["note"] and "clinstagram --account news auth probe" in data["note"]
+    assert "remediation" not in data and "media_access" not in data
+    assert secrets.get("news", "graph_fb_token") == TOKEN
+    assert load_config(tmp_path).accounts["news"].backends == ["graph_fb"]
+    # Compact output drops nulls: no `verified` key means it couldn't be checked.
+    compact = _data(_connect_fb(env))
+    assert "verified" not in compact and compact["note"]
+
+
+@pytest.mark.parametrize("status,code,message", [
+    (400, 4, "(#4) Application request limit reached"),
+    (500, 1, "An unknown error occurred"),
+    (503, 2, "Service temporarily unavailable"),
+])
+def test_rate_limits_and_meta_outages_are_not_blamed_on_the_token(env, secrets, meta, status, code, message):
+    meta.refuse(f"/v21.0/{IG}/media", message, code, status)
+    data = _data(_connect_fb(env, full=True))
+    assert data["verified"] is None
+    assert "media_access" not in data and "remediation" not in data
+    assert data["verify_error"] == message
+    assert "couldn't answer the check" in data["note"]
+
+
+def test_invalid_token_gets_a_new_token_fix(env, secrets, meta):
+    meta.refuse("/v21.0/me", "Error validating access token: Session has expired", 190)
+    data = _data(_connect_fb(env))
+    assert data["verified"] is False and "media_access" not in data
+    assert data["remediation"].startswith("Meta rejected the token as invalid or expired.")
+    assert NEW_TOKEN_STEPS in data["remediation"] and data["remediation"].endswith(RECONNECT)
+    assert secrets.get("news", "graph_fb_token") == TOKEN
+
+
+def test_fb_token_without_an_instagram_account_asks_for_ig_user_id(env, secrets, meta):
+    # /me has no instagram_business_account, so commands would act on /me itself.
+    data = _data(_auth(env, "connect-fb", "--token-stdin", stdin=TOKEN))
+    assert data["verified"] is False
+    assert data["remediation"] == (
+        "This token isn't linked to an Instagram account. Store it with the ID of the Instagram "
+        "account it acts on: pbpaste | clinstagram --account news auth connect-fb --token-stdin --ig-user-id <id>"
+    )
+
+
+def test_a_token_echoed_back_in_an_error_is_redacted(env, secrets, meta):
+    meta.refuse("/v21.0/me", f"Malformed access token {TOKEN}", 190)
+    r = _connect_fb(env)
+    assert TOKEN not in r.output
+    assert _data(r)["verify_error"] == "Malformed access token <token>"
+    # A one-letter "token" isn't a secret; replacing it everywhere would garble Meta's message.
+    meta.refuse("/v21.0/me", "Invalid OAuth access token - Cannot parse access token", 190)
+    data = _data(_auth(env, "connect-ig", "--token-stdin", stdin="a"))
+    assert data["verify_error"] == "Invalid OAuth access token - Cannot parse access token"
+
+
+def test_human_output_reports_each_outcome(capsys):
+    from clinstagram.commands.auth import _print_check
+
+    _print_check({"verified": True, "ig_user_id": IG, "media_count": 12}, "agingresearch.news")
+    _print_check({"verified": False, "verify_error": "(#10) No [media]", "remediation": "New token"}, None)
+    _print_check({"verified": None, "note": "Couldn't check"}, None)
+    out = capsys.readouterr().out
+    assert "Verified: reads @agingresearch.news and its media (12 posts)" in out
+    assert "Warning: Meta refused the token: (#10) No [media]" in out and "Fix: New token" in out
+    assert "Not verified: Couldn't check" in out
