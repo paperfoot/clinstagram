@@ -574,3 +574,26 @@ def test_graph_permission_error_is_final_not_transient():
     assert _classify_error(GraphAPIError(400, "OAuthException", "(#10) Application does not have permission", code=10)) == "permission"
     assert _classify_error(GraphAPIError(400, "OAuthException", "(#200) Permissions error", code=200)) == "permission"
     assert _classify_error(GraphAPIError(400, "OAuthException", "token expired", code=190)) == "auth"
+
+
+def test_graph_permission_refusal_falls_back_to_private(monkeypatch, tmp_path):
+    """Meta withholds hashtag search without App Review; an account that also has the
+    private API should still get an answer instead of exit 7."""
+    from clinstagram.backends.graph import GraphAPIError
+
+    graph, private = MagicMock(), MagicMock()
+    graph.hashtag_top.side_effect = GraphAPIError(400, "OAuthException", "(#10) needs Public Content Access", code=10)
+    private.hashtag_top.return_value = [{"id": "1", "code": "abc"}]
+    secrets = _setup_all_backends()
+    monkeypatch.setattr("clinstagram.commands._dispatch._get_secrets", lambda ctx: secrets)
+    monkeypatch.setattr(
+        "clinstagram.commands._dispatch._instantiate_backend",
+        lambda ctx, name, feature=None: private if name == "private" else graph,
+    )
+    result = runner.invoke(
+        app, ["--json", "hashtag", "top", "longevity", "--limit", "1"],
+        env={"CLINSTAGRAM_CONFIG_DIR": str(tmp_path), "CLINSTAGRAM_TEST_MODE": "1"},
+    )
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["backend_used"] == "private" and data["data"][0]["code"] == "abc"

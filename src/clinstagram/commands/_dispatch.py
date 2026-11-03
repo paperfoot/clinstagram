@@ -474,6 +474,16 @@ def resolve_backend_name(
     return router.route(feature)
 
 
+def _can_fall_back_to_private(ctx: typer.Context, feature: Feature, backend_name: str) -> bool:
+    forced = ctx.obj.get("backend")
+    return (
+        str(backend_name).startswith("graph_")
+        and not ctx.obj.get("_permission_fallback")
+        and (not forced or forced.value == "auto")
+        and can_use_backend(ctx, feature, "private")
+    )
+
+
 def dispatch(
     ctx: typer.Context,
     feature: Feature,
@@ -585,6 +595,14 @@ def dispatch(
                 error=error_str,
                 challenge_type="unknown",
             ))
+        elif kind == "permission" and _can_fall_back_to_private(ctx, feature, backend_name):
+            # Meta withheld the permission (e.g. hashtag search needs App Review), but this
+            # account also has the private API: answer from there instead of failing.
+            ctx.obj["_permission_fallback"] = True
+            cleanup_temp_files()
+            _close_http_client(ctx)
+            dispatch(ctx, feature, action, preferred_backend="private")
+            return
         elif kind == "permission":
             acct = ctx.obj.get("account") or "default"
             output_error(ctx, CLIError(
