@@ -193,3 +193,169 @@ def test_system_user_token_needs_stored_ig_user_id():
     with pytest.raises(GraphAPIError, match="--ig-user-id"):
         GraphBackend(token="tok", login_type="fb", client=client)._me_id()
     assert GraphBackend(token="tok", login_type="fb", client=client, ig_user_id="1784")._me_id() == "1784"
+
+
+# ── Reels: cover image, frame offset, feed ──────────────────────────
+
+
+def _reel_backend(published_id: str = "m1"):
+    """A Graph backend that records each POST /media payload and publishes as `published_id`."""
+    sent: list[dict] = []
+    seen: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        seen.append((request.method, path))
+        if path == "/v21.0/me":
+            return httpx.Response(200, json={"id": "42"})
+        if request.method == "POST" and path == "/v21.0/42/media":
+            sent.append({k: v[0] for k, v in parse_qs(request.content.decode()).items()})
+            return httpx.Response(200, json={"id": "c1"})
+        if request.method == "GET" and path == "/v21.0/c1":
+            return httpx.Response(200, json={"status_code": "FINISHED"})
+        if request.method == "POST" and path == "/v21.0/42/media_publish":
+            return httpx.Response(200, json={"id": published_id})
+        if request.method == "GET" and path == f"/v21.0/{published_id}":
+            return httpx.Response(200, json={
+                "id": published_id, "shortcode": "DQx1",
+                "permalink": "https://www.instagram.com/reel/DQx1/",
+            })
+        raise AssertionError(f"unexpected {request.method} {path}")
+
+    backend = GraphBackend(token="tok", login_type="ig", client=httpx.Client(transport=httpx.MockTransport(handler)))
+    backend._sleep = lambda s: None
+    return backend, sent, seen
+
+
+def test_reel_cover_url_is_sent_as_cover_url():
+    backend, sent, _ = _reel_backend()
+    backend.post_reel("https://example.com/r.mp4", caption="hi", cover="https://cdn.example.com/cover.jpg")
+    assert sent[0]["cover_url"] == "https://cdn.example.com/cover.jpg"
+    assert "thumb_offset" not in sent[0]
+    assert sent[0]["share_to_feed"] == "true"
+
+
+def test_reel_thumbnail_offset_still_maps_to_thumb_offset():
+    backend, sent, _ = _reel_backend()
+    backend.post_reel("https://example.com/r.mp4", thumbnail="1500")
+    assert sent[0]["thumb_offset"] == "1500"
+    assert "cover_url" not in sent[0]
+
+
+def test_reel_can_stay_out_of_the_feed():
+    backend, sent, _ = _reel_backend()
+    backend.post_reel("https://example.com/r.mp4", share_to_feed=False)
+    assert sent[0]["share_to_feed"] == "false"
+
+
+@pytest.mark.parametrize("kwargs,match", [
+    ({"cover": "https://cdn.example.com/c.jpg", "thumbnail": "1500"}, "not both"),
+    ({"cover": "/tmp/cover.jpg"}, "public image URL"),
+    ({"thumbnail": "/tmp/cover.jpg"}, "--cover"),
+])
+def test_reel_refuses_cover_options_graph_cannot_honour(kwargs, match):
+    backend, sent, seen = _reel_backend()
+    with pytest.raises(ValueError, match=match):
+        backend.post_reel("https://example.com/r.mp4", **kwargs)
+    assert sent == []
+    assert ("POST", "/v21.0/42/media_publish") not in seen
+
+
+# ── `post reel` command ──────────────────────────────────────────────
+
+
+def _cli(monkeypatch, tmp_path, graph=None, backends=("graph_ig",), mode=None):
+    """Run clinstagram against `graph` (a GraphBackend over MockTransport) and a mock private backend."""
+    from unittest.mock import MagicMock
+
+    from typer.testing import CliRunner
+
+    from clinstagram.auth.keychain import BACKEND_TOKEN_MAP, SecretsStore
+    from clinstagram.cli import app
+
+    secrets = SecretsStore(backend="memory")
+    for name in backends:
+        secrets.set("default", BACKEND_TOKEN_MAP[name], "fake-token")
+    private = MagicMock()
+    private.name = "private"
+    private.post_reel.return_value = {"id": "p1", "status": "published"}
+
+    def instantiate(ctx, name, feature=None):
+        if name.startswith("graph"):
+            assert graph is not None, f"{name} should not have been used"
+            return graph
+        return private
+
+    monkeypatch.setattr("clinstagram.commands._dispatch._get_secrets", lambda ctx: secrets)
+    monkeypatch.setattr("clinstagram.commands._dispatch._instantiate_backend", instantiate)
+    monkeypatch.setattr("clinstagram.commands._dispatch._apply_jitter_delay", lambda ctx, f: None)
+    monkeypatch.setattr("clinstagram.commands.post.stage", lambda src, name: src)
+    env = {"CLINSTAGRAM_CONFIG_DIR": str(tmp_path), "CLINSTAGRAM_TEST_MODE": "1"}
+    runner = CliRunner()
+    if mode:
+        runner.invoke(app, ["config", "mode", mode], env=env)
+
+    def run(*args):
+        result = runner.invoke(app, ["--json", *args], env=env)
+        return result, (json.loads(result.output) if result.output.strip() else None)
+
+    return run, private
+
+
+def test_cli_reel_cover_and_no_feed_reach_graph(monkeypatch, tmp_path):
+    backend, sent, _ = _reel_backend()
+    run, _ = _cli(monkeypatch, tmp_path, graph=backend)
+    result, body = run("post", "reel", "https://example.com/r.mp4", "--cover",
+                       "https://cdn.example.com/cover.jpg", "--no-feed")
+    assert result.exit_code == 0, result.output
+    assert sent[0]["cover_url"] == "https://cdn.example.com/cover.jpg"
+    assert sent[0]["share_to_feed"] == "false"
+    assert body["backend_used"] == "graph_ig"
+
+
+def test_cli_reel_shares_to_feed_by_default(monkeypatch, tmp_path):
+    backend, sent, _ = _reel_backend()
+    run, _ = _cli(monkeypatch, tmp_path, graph=backend)
+    result, _ = run("post", "reel", "https://example.com/r.mp4", "--thumbnail", "2000")
+    assert result.exit_code == 0, result.output
+    assert sent[0]["share_to_feed"] == "true"
+    assert sent[0]["thumb_offset"] == "2000"
+
+
+def test_cli_reel_refuses_cover_with_thumbnail(monkeypatch, tmp_path):
+    run, private = _cli(monkeypatch, tmp_path)
+    result, body = run("post", "reel", "https://example.com/r.mp4",
+                       "--cover", "https://cdn.example.com/c.jpg", "--thumbnail", "1500")
+    assert result.exit_code == 1
+    assert "only one" in body["error"]
+    private.post_reel.assert_not_called()
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_cli_reel_local_cover_on_graph_is_a_user_error(monkeypatch, tmp_path, dry_run):
+    cover = tmp_path / "cover.jpg"
+    cover.write_bytes(b"jpg")
+    run, _ = _cli(monkeypatch, tmp_path)  # graph only: any Graph call would fail the test
+    args = ["--dry-run"] if dry_run else []
+    result, body = run(*args, "post", "reel", "https://example.com/r.mp4", "--cover", str(cover))
+    assert result.exit_code == 1
+    assert "public image URL" in body["error"]
+    assert "--backend private" in body["remediation"]
+
+
+def test_cli_reel_image_thumbnail_on_graph_points_to_cover(monkeypatch, tmp_path):
+    run, _ = _cli(monkeypatch, tmp_path)
+    result, body = run("post", "reel", "https://example.com/r.mp4", "--thumbnail", "https://cdn.example.com/c.jpg")
+    assert result.exit_code == 1
+    assert "--cover" in body["remediation"]
+
+
+def test_cli_reel_local_cover_goes_to_private_as_its_thumbnail(monkeypatch, tmp_path):
+    cover = tmp_path / "cover.jpg"
+    cover.write_bytes(b"jpg")
+    run, private = _cli(monkeypatch, tmp_path, backends=("graph_ig", "private"), mode="private-enabled")
+    result, body = run("post", "reel", "https://example.com/r.mp4", "--cover", str(cover), "--no-feed")
+    assert result.exit_code == 0, result.output
+    assert body["backend_used"] == "private"
+    # Same call shape as before --cover existed: the cover is the private API's thumbnail.
+    private.post_reel.assert_called_once_with("https://example.com/r.mp4", "", str(cover), "")

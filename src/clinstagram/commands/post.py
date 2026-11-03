@@ -5,8 +5,16 @@ from typing import Optional
 import typer
 
 from clinstagram.backends.capabilities import Feature
-from clinstagram.commands._dispatch import dispatch, make_subgroup, preferred_private_backend, stage
+from clinstagram.commands._dispatch import (
+    dispatch,
+    make_subgroup,
+    output_error,
+    preferred_private_backend,
+    resolve_backend_name,
+    stage,
+)
 from clinstagram.media import is_url
+from clinstagram.models import CLIError, ExitCode
 
 post_app = make_subgroup("Post photos, videos, reels, carousels")
 
@@ -67,29 +75,74 @@ def video(
     )
 
 
+def _reel_cover_error(thumbnail: str, cover: str, backend_name: str | None) -> CLIError | None:
+    """Cover options the chosen backend can't honour, refused before anything is uploaded."""
+    if cover and thumbnail:
+        return CLIError(
+            exit_code=ExitCode.USER_ERROR,
+            error="--cover and --thumbnail both set the reel's cover; pass only one",
+            remediation="--cover takes an image; --thumbnail takes a frame offset in ms (Graph) "
+                        "or an image (private API)",
+        )
+    if not (backend_name or "").startswith("graph"):
+        return None
+    if cover and not is_url(cover):
+        return CLIError(
+            exit_code=ExitCode.USER_ERROR,
+            error=f"Graph needs a public image URL for --cover, not a local file: {cover}",
+            remediation="Upload the image and pass its https:// URL, or use --backend private",
+        )
+    if thumbnail and not thumbnail.isdigit():
+        return CLIError(
+            exit_code=ExitCode.USER_ERROR,
+            error=f"Graph takes --thumbnail as a frame offset in ms, not an image: {thumbnail}",
+            remediation="For a cover image use --cover <public image URL>, or use --backend private",
+        )
+    return None
+
+
 @post_app.command("reel")
 def reel(
     ctx: typer.Context,
     path: str = typer.Argument(..., help="Video path or URL"),
     caption: str = typer.Option("", "--caption", "-c", help="Post caption"),
-    thumbnail: str = typer.Option("", "--thumbnail", help="Thumbnail path or URL"),
+    thumbnail: str = typer.Option(
+        "", "--thumbnail",
+        help="Graph: frame offset in ms to use as the cover. Private API: cover image path or URL",
+    ),
+    cover: str = typer.Option(
+        "", "--cover",
+        help="Cover image. Graph needs a public image URL (cover_url); the private API also "
+             "takes a local file. Not with --thumbnail",
+    ),
     audio: str = typer.Option("", "--audio", help="Audio name"),
+    feed: bool = typer.Option(
+        True, "--feed/--no-feed",
+        help="Graph: also show the reel on the profile grid and in followers' feeds "
+             "(share_to_feed), not only in the Reels tab. Ignored by the private API",
+    ),
 ):
     """Post a reel."""
+    if cover and thumbnail:
+        output_error(ctx, _reel_cover_error(thumbnail, cover, None))
     preferred_backend = _prefer_private_for_media(ctx, Feature.POST_REEL, path)
-    if thumbnail and not thumbnail.isdigit():
+    if (thumbnail and not thumbnail.isdigit()) or (cover and not is_url(cover)):
+        # A cover image file (or an image as --thumbnail) only works on the private API.
         preferred_backend = preferred_private_backend(ctx, Feature.POST_REEL) or preferred_backend
-    dispatch(
-        ctx,
-        Feature.POST_REEL,
-        lambda b: b.post_reel(
-            stage(path, ctx.obj["_backend_name"]),
-            caption,
-            _resolve_thumbnail(ctx, thumbnail),
-            audio,
-        ),
-        preferred_backend=preferred_backend,
-    )
+        chosen = resolve_backend_name(ctx, Feature.POST_REEL, preferred_backend=preferred_backend)
+        problem = _reel_cover_error(thumbnail, cover, chosen)
+        if problem:
+            output_error(ctx, problem)
+
+    def action(b):
+        name = ctx.obj["_backend_name"]
+        video = stage(path, name)
+        if name.startswith("graph"):
+            return b.post_reel(video, caption, thumbnail, audio, cover=cover, share_to_feed=feed)
+        # The private API takes the cover as its thumbnail image and has no feed switch.
+        return b.post_reel(video, caption, _resolve_thumbnail(ctx, thumbnail or cover), audio)
+
+    dispatch(ctx, Feature.POST_REEL, action, preferred_backend=preferred_backend)
 
 
 @post_app.command("carousel")

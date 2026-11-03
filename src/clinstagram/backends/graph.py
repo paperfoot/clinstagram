@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from clinstagram.backends.base import Backend
+from clinstagram.media import is_url
 
 # Instagram usernames: 1-30 chars, alphanumeric + dots + underscores
 _USERNAME_RE = re.compile(r"^[a-zA-Z0-9._]{1,30}$")
@@ -348,19 +349,38 @@ class GraphBackend(Backend):
         return {"id": result["id"], "status": "published"}
 
     def post_reel(
-        self, media: str, caption: str = "", thumbnail: str = "", audio: str = ""
+        self, media: str, caption: str = "", thumbnail: str = "", audio: str = "",
+        cover: str = "", share_to_feed: bool = True,
     ) -> dict:
+        """Publish a reel. `cover` is a public image URL (Graph's cover_url); `thumbnail`
+        is a frame offset in ms (thumb_offset). Meta would silently ignore the offset
+        when both are sent, so both together is refused."""
+        if cover and thumbnail:
+            raise ValueError(
+                "Pass either a cover image (--cover) or a frame offset (--thumbnail), not both."
+            )
+        if cover and not is_url(cover):
+            raise ValueError(
+                "Graph needs a public image URL for --cover. Upload the image first, "
+                "or use --backend private for a local file."
+            )
         me = self._me_id()
         # share_to_feed: the reel shows on the profile grid and in followers' feeds, not only
         # in the Reels tab. Said explicitly rather than left to Meta's default.
-        payload: dict[str, Any] = {"video_url": media, "media_type": "REELS", "share_to_feed": "true"}
+        payload: dict[str, Any] = {
+            "video_url": media,
+            "media_type": "REELS",
+            "share_to_feed": "true" if share_to_feed else "false",
+        }
         if caption:
             payload["caption"] = caption
+        if cover:
+            payload["cover_url"] = cover
         if thumbnail:
             if not thumbnail.isdigit():
                 raise ValueError(
                     "Graph API expects --thumbnail to be a millisecond thumb offset. "
-                    "Use a numeric value or route through --backend private."
+                    "For a cover image use --cover <public image URL>, or route through --backend private."
                 )
             payload["thumb_offset"] = thumbnail
         if audio:
