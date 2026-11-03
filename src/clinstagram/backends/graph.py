@@ -3,6 +3,7 @@ from __future__ import annotations
 import json as _json
 import re
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -647,7 +648,10 @@ class GraphBackend(Backend):
         "STORY": ("reach", "views", "replies", "shares", "total_interactions", "navigation",
                   "follows", "profile_visits"),
     }
-    _ACCOUNT_INSIGHT_METRICS = "reach,views,accounts_engaged,total_interactions,profile_links_taps"
+    _ACCOUNT_METRICS: tuple[str, ...] = (
+        "reach", "views", "accounts_engaged", "total_interactions", "profile_views",
+        "profile_links_taps", "website_clicks", "follows_and_unfollows",
+    )
     INSIGHT_RETRIES = 3  # times a call is retried without the metrics Meta rejected
 
     def _remember_types(self, items: list[dict]) -> None:
@@ -740,14 +744,32 @@ class GraphBackend(Backend):
         out.update(self._insights(f"{media_id}/insights", self._MEDIA_METRICS[kind]))
         return out
 
-    def analytics_account(self) -> dict:
+    def analytics_account(self, day: str | None = None) -> dict:
+        """Account totals for one UTC day, YYYY-MM-DD (default: today so far)."""
         me = self._me_id()
-        data = self._get(f"{me}/insights", {
-            "metric": self._ACCOUNT_INSIGHT_METRICS,
+        day, since, until = self._utc_day(day)
+        out: dict[str, Any] = {"period": "day", "day": day}
+        out.update(self._insights(f"{me}/insights", self._ACCOUNT_METRICS, {
             "period": "day",
             "metric_type": "total_value",
-        })
-        return {"period": "day", "insights": self._flatten_insights(data)}
+            "since": str(since),
+            "until": str(until),
+        }))
+        return out
+
+    def _utc_day(self, day: str | None) -> tuple[str, int, int]:
+        """(YYYY-MM-DD, since, until) bounding a UTC day."""
+        now = getattr(self, "_now", time.time)()
+        if day:
+            start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        else:
+            start = datetime.fromtimestamp(now, timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        since = int(start.timestamp())
+        if since > now:
+            raise ValueError(f"{start:%Y-%m-%d} (UTC) hasn't started yet")
+        # Meta can't report on time that hasn't happened: today's range ends now.
+        until = max(since + 1, min(since + 86400, int(now)))
+        return f"{start:%Y-%m-%d}", since, until
 
     @staticmethod
     def _flatten_insights(data: Any) -> dict:

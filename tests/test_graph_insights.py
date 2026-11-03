@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import httpx
@@ -253,3 +254,91 @@ def test_cli_missing_permission_is_still_exit_7(monkeypatch, tmp_path):
     result, body = run("analytics", "insights", "777")
     assert result.exit_code == 7
     assert "does not have permission" in body["error"]
+
+
+# ── Account insights for a UTC day ──────────────────────────────────
+
+ACCOUNT = ("reach,views,accounts_engaged,total_interactions,profile_views,profile_links_taps,"
+           "website_clicks,follows_and_unfollows")
+NOV_3_NOON = datetime(2026, 11, 3, 12, 34, 56, tzinfo=timezone.utc).timestamp()
+
+
+def totals(**values) -> dict:
+    return {"data": [{"name": k, "period": "day", "total_value": {"value": v}} for k, v in values.items()]}
+
+
+def utc(y: int, m: int, d: int) -> int:
+    return int(datetime(y, m, d, tzinfo=timezone.utc).timestamp())
+
+
+def account_backend(fake: FakeGraph, now: float = NOV_3_NOON) -> GraphBackend:
+    backend = fake.backend()
+    backend._now = lambda: now
+    return backend
+
+
+def test_account_day_asks_meta_for_that_utc_day():
+    fake = FakeGraph({"GET /42/insights": totals(reach=120, follows_and_unfollows=3)})
+    result = account_backend(fake).analytics_account(day="2026-11-01")
+    params = fake.calls("/42/insights")[0].url.params
+    assert params["metric"] == ACCOUNT
+    assert (params["period"], params["metric_type"]) == ("day", "total_value")
+    assert (int(params["since"]), int(params["until"])) == (utc(2026, 11, 1), utc(2026, 11, 2))
+    assert result == {"period": "day", "day": "2026-11-01",
+                      "insights": {"reach": 120, "follows_and_unfollows": 3}}
+
+
+def test_account_defaults_to_today_so_far():
+    fake = FakeGraph({"GET /42/insights": totals(reach=7)})
+    result = account_backend(fake).analytics_account()
+    params = fake.calls("/42/insights")[0].url.params
+    assert (int(params["since"]), int(params["until"])) == (utc(2026, 11, 3), int(NOV_3_NOON))
+    assert result["day"] == "2026-11-03"
+    assert result["period"] == "day"
+
+
+def test_account_drops_metrics_meta_no_longer_offers():
+    fake = FakeGraph({"GET /42/insights": [
+        graph_error(100, "(#100) metric[4] must be one of the following values: reach, views, "
+                         "accounts_engaged, total_interactions, profile_links_taps, follows_and_unfollows"),
+        totals(reach=5),
+    ]})
+    result = account_backend(fake).analytics_account(day="2026-11-02")
+    assert result["dropped_metrics"] == ["profile_views", "website_clicks"]
+    assert fake.metrics("/42/insights")[1] == ("reach,views,accounts_engaged,total_interactions,"
+                                               "profile_links_taps,follows_and_unfollows")
+    assert result["insights"] == {"reach": 5}
+
+
+def test_account_refuses_a_day_that_has_not_started():
+    fake = FakeGraph({})
+    with pytest.raises(ValueError, match="hasn't started"):
+        account_backend(fake).analytics_account(day="2026-11-04")
+    assert fake.requests == []
+
+
+@pytest.mark.parametrize("day", ["2026-13-01", "03-11-2026", "yesterday", "2026-11-3", "2999-01-01"])
+def test_cli_bad_day_is_a_user_error(monkeypatch, tmp_path, day):
+    fake = FakeGraph({})
+    run, _ = graph_cli(monkeypatch, tmp_path, account_backend(fake))
+    result, body = run("analytics", "account", "--day", day)
+    assert result.exit_code == 1
+    assert "--day" in body["error"]
+    assert fake.requests == []
+
+
+def test_cli_account_day_reaches_graph(monkeypatch, tmp_path):
+    fake = FakeGraph({"GET /42/insights": totals(reach=64)})
+    run, _ = graph_cli(monkeypatch, tmp_path, account_backend(fake))
+    result, body = run("analytics", "account", "--day", "2025-06-01")
+    assert result.exit_code == 0, result.output
+    assert body["data"] == {"period": "day", "day": "2025-06-01", "insights": {"reach": 64}}
+    assert int(fake.calls("/42/insights")[0].url.params["since"]) == utc(2025, 6, 1)
+
+
+def test_cli_account_day_on_the_private_api_is_exit_7(monkeypatch, tmp_path):
+    run, private = graph_cli(monkeypatch, tmp_path, account_backend(FakeGraph({})), backends=("private",))
+    result, body = run("analytics", "account", "--day", "2025-06-01")
+    assert result.exit_code == 7
+    assert "Graph API" in body["error"]
+    private.analytics_account.assert_not_called()
