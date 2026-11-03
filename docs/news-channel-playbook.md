@@ -17,6 +17,8 @@ clinstagram --json profile convert --to creator         # unlocks insights
 clinstagram --json profile show                # confirm
 ```
 
+Do the identity changes (username, name, picture, bio, links) by hand in the Instagram app, or spread them over several days. Through the private API, all at once, they look like an account takeover. On 2 Nov 2026 that pattern (a dormant account renamed, rebranded and probed for bio links within an hour, after a 429) drew a link-sharing restriction for "prohibited commercial practices". It was lifted on review the next day.
+
 Add the website link in the Instagram app (Edit profile → Links): Instagram ignores the website field when it's set through the API. Use `https://agingresearch.news/?utm_source=instagram&utm_medium=bio`.
 
 Insights (`analytics insights`, `analytics account`) need a Business or Creator account.
