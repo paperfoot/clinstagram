@@ -33,6 +33,9 @@ include = ["src", "tests", "README.md", "LICENSE", "SKILL.md", "pyproject.toml"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/clinstagram"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"SKILL.md" = "clinstagram/SKILL.md"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

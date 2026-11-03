@@ -20,20 +20,14 @@ _AGENT_DIRS = {
 
 
 def _find_skill_source() -> Path | None:
-    """Find the SKILL.md or clinstagram.md bundled with this package."""
-    # Try package data first (installed via pip)
+    """SKILL.md: packaged into the wheel as clinstagram/SKILL.md, or at the repo root in development."""
     import importlib.resources
     try:
-        ref = importlib.resources.files("clinstagram") / ".." / ".." / ".claude" / "skills" / "clinstagram.md"
+        ref = importlib.resources.files("clinstagram") / "SKILL.md"
         if ref.is_file():  # type: ignore[union-attr]
             return Path(str(ref))
     except Exception:
         pass
-    # Try relative to this file (development mode)
-    project_skill = Path(__file__).resolve().parents[3] / ".claude" / "skills" / "clinstagram.md"
-    if project_skill.exists():
-        return project_skill
-    # Try SKILL.md at project root
     skill_md = Path(__file__).resolve().parents[3] / "SKILL.md"
     if skill_md.exists():
         return skill_md
@@ -51,15 +45,21 @@ def _detect_agents() -> list[str]:
 
 
 def _install_for_agent(agent: str, source: Path, force: bool = False) -> dict:
-    """Install the skill file for a specific agent."""
-    target_dir = _AGENT_DIRS[agent]
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target_file = target_dir / "clinstagram.md"
+    """Install as <skills>/clinstagram/SKILL.md, the folder layout agents load skills from."""
+    target_dir = _AGENT_DIRS[agent] / "clinstagram"
+    target_file = target_dir / "SKILL.md"
+    legacy = _AGENT_DIRS[agent] / "clinstagram.md"  # flat file older versions wrote; agents ignore it
 
-    if target_file.exists() and not force:
+    if target_file.exists() and not force and target_file.read_bytes() == source.read_bytes():
         return {"agent": agent, "status": "already_installed", "path": str(target_file)}
+    if target_file.exists() and not force:
+        return {"agent": agent, "status": "outdated", "path": str(target_file),
+                "hint": "Run: clinstagram skill install-skill --force"}
 
+    target_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target_file)
+    if legacy.exists():
+        legacy.unlink()
     return {"agent": agent, "status": "installed", "path": str(target_file)}
 
 
