@@ -1,4 +1,5 @@
-"""auth connect-ig / connect-fb --token-stdin and the live token check after storing.
+"""auth connect-ig / connect-fb --token-stdin, the live token check after storing,
+and auth probe's media-access check.
 
 Meta is faked with httpx.MockTransport; no network, no real tokens.
 """
@@ -292,3 +293,58 @@ def test_human_output_reports_each_outcome(capsys):
     assert "Verified: reads @agingresearch.news and its media (12 posts)" in out
     assert "Warning: Meta refused the token: (#10) No [media]" in out and "Fix: New token" in out
     assert "Not verified: Couldn't check" in out
+
+
+# --- auth probe --------------------------------------------------------------------
+
+def test_probe_reports_a_healthy_graph_token(env, secrets, meta):
+    _data(_connect_fb(env))
+    meta.requests.clear()
+    backends = _data(_auth(env, "probe"))["backends"]
+    fb = backends["graph_fb"]
+    assert fb["configured"] is True and fb["reachable"] is True and fb["verified"] is True
+    assert fb["account_id"] == IG and fb["username"] == "agingresearch.news"
+    assert fb["media_access"] is True and fb["media_count"] == 12
+    assert "error" not in fb and "remediation" not in fb
+    # It probes the account commands act on (the stored --ig-user-id).
+    assert [q.url.path for q in meta.requests] == ["/v21.0/me", f"/v21.0/{IG}", f"/v21.0/{IG}/media"]
+    assert backends["graph_ig"]["configured"] is False and backends["private"]["configured"] is False
+
+
+def test_probe_reports_a_profile_only_token_as_broken(env, secrets, meta):
+    _data(_connect_fb(env))
+    meta.routes[f"/v21.0/{IG}"] = (200, {"id": IG, "username": "agingresearch.news", "media_count": 0})
+    meta.refuse(f"/v21.0/{IG}/media", "(#10) Application does not have permission for this action", 10)
+    r = _auth(env, "probe")
+    fb = _data(r)["backends"]["graph_fb"]
+    assert fb["configured"] is True
+    assert fb["reachable"] is False and fb["verified"] is False and fb["media_access"] is False
+    assert fb["media_count"] == 0
+    assert fb["error"] == "(#10) Application does not have permission for this action"
+    assert "authorization of the Meta app is broken" in fb["remediation"]
+    assert NEW_TOKEN_STEPS in fb["remediation"] and fb["remediation"].endswith(RECONNECT)
+    assert TOKEN not in r.output
+    assert secrets.get("news", "graph_fb_token") == TOKEN
+
+
+def test_probe_human_output_shows_the_error_and_the_fix(env, secrets, meta, monkeypatch):
+    _data(_connect_fb(env))
+    meta.refuse(f"/v21.0/{IG}/media", "(#200) API access blocked", 200)
+    monkeypatch.setattr("typer.testing._NamedTextIOWrapper.isatty", lambda self: True)  # a terminal: no JSON
+    r = runner.invoke(app, ["--account", "news", "auth", "probe"], env=env)
+    assert r.exit_code == 0, r.output
+    lines = r.stdout.splitlines()
+    assert "  graph_fb: Configured but failing" in lines
+    assert "    error: (#200) API access blocked" in lines
+    assert any(line.startswith("    fix: This account's authorization of the Meta app is broken") for line in lines)
+    assert "  graph_ig: Not configured" in lines
+    assert TOKEN not in r.output
+
+
+def test_probe_network_failure_is_failing_but_unjudged(env, secrets, meta):
+    _data(_connect_fb(env))
+    meta.routes["/v21.0/me"] = httpx.ConnectError("[Errno 8] nodename nor servname provided")
+    fb = _data(_auth(env, "probe", full=True))["backends"]["graph_fb"]
+    assert fb["reachable"] is False and fb["verified"] is None
+    assert fb["error"].startswith("ConnectError: ") and "auth probe" in fb["note"]
+    assert "remediation" not in fb

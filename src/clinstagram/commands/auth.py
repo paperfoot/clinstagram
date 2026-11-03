@@ -450,39 +450,38 @@ def _probe_backend(ctx: typer.Context, backend_name: str) -> dict:
     if not configured:
         return result
 
+    if backend_name.startswith("graph_"):
+        # The same check connect-* runs: a token that reads the profile but not the
+        # media (seen after Instagram's Boost flow) is broken, not reachable.
+        token = secrets.get(account, f"{backend_name}_token") or ""
+        check = _verify_graph_token(ctx, backend_name, token, account)
+        result["reachable"] = check["verified"] is True
+        ig_id = check.pop("ig_user_id", None)
+        if ig_id:
+            result["account_id"] = ig_id
+        error = check.pop("verify_error", None)
+        if error:
+            result["error"] = error
+        result.update(check)
+        return result
+
     try:
-        if backend_name.startswith("graph_"):
-            import httpx
+        from instagrapi import Client
 
-            from clinstagram.backends.graph import GraphBackend
+        from clinstagram.auth.private_login import _validate_session
 
-            login_type = backend_name.split("_", 1)[1]
-            token = secrets.get(account, f"{backend_name}_token")
-            client = httpx.Client(timeout=10.0)
-            try:
-                backend = GraphBackend(token=token or "", login_type=login_type, client=client)
-                result["account_id"] = backend._me_id()
-            finally:
-                client.close()
-        else:
-            from instagrapi import Client
-
-            from clinstagram.auth.private_login import _validate_session
-
-            session_json = secrets.get(account, "private_session")
-            if not session_json:
-                return result
-            cl = Client()
-            cl.set_settings(json.loads(session_json))
-            proxy = ctx.obj.get("proxy")
-            if proxy:
-                cl.set_proxy(proxy)
-            result["reachable"] = _validate_session(cl)
-            if result["reachable"]:
-                info = cl.account_info()
-                result["username"] = getattr(info, "username", None)
+        session_json = secrets.get(account, "private_session")
+        if not session_json:
             return result
-        result["reachable"] = True
+        cl = Client()
+        cl.set_settings(json.loads(session_json))
+        proxy = ctx.obj.get("proxy")
+        if proxy:
+            cl.set_proxy(proxy)
+        result["reachable"] = _validate_session(cl)
+        if result["reachable"]:
+            info = cl.account_info()
+            result["username"] = getattr(info, "username", None)
     except Exception as exc:
         result["error"] = str(exc)
     return result
@@ -504,6 +503,9 @@ def probe(ctx: typer.Context):
             else:
                 s = "Configured but failing"
             typer.echo(f"  {name}: {s}")
+            for key, label in (("error", "error"), ("remediation", "fix"), ("note", "note")):
+                if info.get(key):
+                    typer.echo(f"    {label}: {info[key]}")
         return
     output_success(ctx, result)
 
