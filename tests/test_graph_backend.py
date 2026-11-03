@@ -136,6 +136,32 @@ def test_reel_waits_for_container_to_finish_before_publishing():
     assert calls == ["poll", "poll", "poll", "publish"]
 
 
+def test_reel_is_shared_to_feed():
+    from urllib.parse import parse_qs
+
+    sent: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/v21.0/me":
+            return httpx.Response(200, json={"id": "42"})
+        if request.method == "POST" and path == "/v21.0/42/media":
+            sent.update({k: v[0] for k, v in parse_qs(request.content.decode()).items()})
+            return httpx.Response(200, json={"id": "c1"})
+        if request.method == "GET" and path == "/v21.0/c1":
+            return httpx.Response(200, json={"status_code": "FINISHED"})
+        if request.method == "POST" and path == "/v21.0/42/media_publish":
+            return httpx.Response(200, json={"id": "m1"})
+        raise AssertionError(f"unexpected {request.method} {path}")
+
+    backend = GraphBackend(token="tok", login_type="ig", client=httpx.Client(transport=httpx.MockTransport(handler)))
+    backend._sleep = lambda s: None
+    backend.post_reel("https://example.com/r.mp4", caption="hi", audio="Original")
+    assert sent["media_type"] == "REELS"
+    assert sent["share_to_feed"] == "true"
+    assert sent["audio_name"] == "Original"
+
+
 def test_failed_container_is_never_published():
     import pytest
     from clinstagram.backends.graph import GraphAPIError

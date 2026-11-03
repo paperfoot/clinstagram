@@ -351,7 +351,9 @@ class GraphBackend(Backend):
         self, media: str, caption: str = "", thumbnail: str = "", audio: str = ""
     ) -> dict:
         me = self._me_id()
-        payload: dict[str, Any] = {"video_url": media, "media_type": "REELS"}
+        # share_to_feed: the reel shows on the profile grid and in followers' feeds, not only
+        # in the Reels tab. Said explicitly rather than left to Meta's default.
+        payload: dict[str, Any] = {"video_url": media, "media_type": "REELS", "share_to_feed": "true"}
         if caption:
             payload["caption"] = caption
         if thumbnail:
