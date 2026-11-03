@@ -179,15 +179,33 @@ def _validate_session(client: Any) -> bool:
 
 
 def _extract_uuids(settings: dict) -> dict:
-    """Pull device UUIDs from settings for fingerprint preservation."""
-    uuids = {}
-    for key in ("uuid", "phone_id", "device_id", "advertising_id"):
+    """Pull the device identity out of saved settings so a re-login looks like the same phone.
+
+    instagrapi keeps the IDs under settings["uuids"]; older sessions had them at the top level.
+    """
+    uuids: dict = {}
+    for key in ("uuid", "phone_id", "device_id", "advertising_id", "android_device_id"):
         if key in settings:
             uuids[key] = settings[key]
-    # Also preserve device settings (model, android version, etc.)
-    if "device_settings" in settings:
+    nested = settings.get("uuids")
+    if isinstance(nested, dict):
+        uuids.update({k: v for k, v in nested.items() if v})
+    if settings.get("device_settings"):
         uuids["device_settings"] = settings["device_settings"]
     return uuids
+
+
+def _restore_identity(client: Any, uuids: dict) -> None:
+    """Re-apply a saved phone (model and IDs) to a fresh client before login."""
+    if not uuids:
+        return
+    device = uuids.get("device_settings")
+    if device:
+        client.set_device(device)
+    ids = {k: v for k, v in uuids.items() if k != "device_settings"}
+    if ids:
+        client.set_uuids(ids)
+    client.set_user_agent()
 
 
 def login_private(config: LoginConfig, existing_session: str = "") -> LoginResult:
@@ -252,8 +270,7 @@ def login_private(config: LoginConfig, existing_session: str = "") -> LoginResul
             cl = Client()
             _configure_client(cl, config)
             cl.set_settings({})
-            if uuids:
-                cl.set_uuids(uuids)
+            _restore_identity(cl, uuids)
 
             cl.login(config.username, config.password)
 
@@ -301,13 +318,17 @@ def login_private(config: LoginConfig, existing_session: str = "") -> LoginResul
             # Fall through to fresh login below, preserving UUIDs
             cl = Client()
             _configure_client(cl, config)
-            if uuids:
-                cl.set_uuids(uuids)
+            _restore_identity(cl, uuids)
         except Exception as exc:
             logger.warning("Session restore failed for %s: %s", config.username, exc)
-            # Fall through to fresh login
+            # Fall through to fresh login, still as the same phone
+            try:
+                uuids = _extract_uuids(json.loads(existing_session))
+            except Exception:
+                uuids = {}
             cl = Client()
             _configure_client(cl, config)
+            _restore_identity(cl, uuids)
 
     # ── Fresh login ─────────────────────────────────────────────────
     if not config.password:

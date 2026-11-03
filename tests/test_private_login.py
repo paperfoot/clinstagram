@@ -37,6 +37,29 @@ class TestExtractUuids:
     def test_empty_settings(self):
         assert _extract_uuids({}) == {}
 
+    def test_reads_instagrapi_nested_uuids(self):
+        # instagrapi's get_settings() keeps the IDs under "uuids"; missing them made
+        # every re-login look like a brand-new phone to Instagram.
+        settings = {
+            "uuids": {"uuid": "u1", "phone_id": "p1", "android_device_id": "android-1",
+                      "advertising_id": "a1", "client_session_id": "c1"},
+            "device_settings": {"model": "6T Dev"},
+            "authorization_data": {"sessionid": "secret"},
+        }
+        uuids = _extract_uuids(settings)
+        assert uuids["phone_id"] == "p1" and uuids["android_device_id"] == "android-1"
+        assert uuids["device_settings"]["model"] == "6T Dev"
+        assert "authorization_data" not in uuids
+
+    def test_restore_identity_reapplies_device_and_ids(self):
+        from unittest.mock import MagicMock
+        from clinstagram.auth.private_login import _restore_identity
+        cl = MagicMock()
+        _restore_identity(cl, {"phone_id": "p1", "device_settings": {"model": "6T Dev"}})
+        cl.set_device.assert_called_once_with({"model": "6T Dev"})
+        cl.set_uuids.assert_called_once_with({"phone_id": "p1"})
+        cl.set_user_agent.assert_called_once()
+
     def test_partial_settings(self):
         uuids = _extract_uuids({"uuid": "abc"})
         assert uuids == {"uuid": "abc"}
@@ -353,7 +376,9 @@ class TestDeviceFingerprint:
         _configure_client(client, config)
         device_arg = client.set_device.call_args[0][0]
         assert device_arg["model"] == "Galaxy S24"
-        assert device_arg["manufacturer"] == "Google"  # default preserved
+        from clinstagram.auth.private_login import _generate_device_for_account
+        # the base device is seeded per machine and account, so compare with it, not a fixed brand
+        assert device_arg["manufacturer"] == _generate_device_for_account("u")["manufacturer"]
 
 
 class TestLoginCommand:
