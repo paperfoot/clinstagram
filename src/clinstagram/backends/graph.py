@@ -17,10 +17,12 @@ _USERNAME_RE = re.compile(r"^[a-zA-Z0-9._]{1,30}$")
 class GraphAPIError(Exception):
     """Raised when the Instagram/Facebook Graph API returns an error."""
 
-    def __init__(self, status_code: int, error_type: str, message: str, code: int | None = None):
+    def __init__(self, status_code: int, error_type: str, message: str, code: int | None = None,
+                 subcode: int | None = None):
         self.status_code = status_code
         self.error_type = error_type
         self.code = code
+        self.subcode = subcode
         super().__init__(message)
 
 
@@ -29,11 +31,18 @@ def _extract_error(response: httpx.Response) -> GraphAPIError:
     try:
         body = response.json()
         err = body.get("error", {})
+        message = err.get("message", response.text)
+        # Meta often puts the useful part in error_user_msg ("Invalid parameter" alone
+        # doesn't say the post predates the switch to a business account).
+        detail = err.get("error_user_msg") or err.get("error_user_title")
+        if detail and detail not in message:
+            message = f"{message}: {detail}"
         return GraphAPIError(
             status_code=response.status_code,
             error_type=err.get("type", "Unknown"),
-            message=err.get("message", response.text),
+            message=message,
             code=err.get("code"),
+            subcode=err.get("error_subcode"),
         )
     except Exception:
         return GraphAPIError(
@@ -48,6 +57,42 @@ def _check(response: httpx.Response) -> dict | list:
     if response.status_code >= 400:
         raise _extract_error(response)
     return response.json()
+
+
+# Meta answers code 10 both for "the token lacks this permission" and for this benign
+# case: the post hasn't reached enough viewers to have insights yet.
+_NOT_ENOUGH_VIEWERS = re.compile(r"not enough viewers", re.I)
+# "(#100) metric[3] must be one of the following values: reach, views, ..." lists what is
+# allowed, so the rejected metrics are the requested ones it leaves out.
+_ALLOWED_METRICS = re.compile(r"\bmetric(?:\[(\d+)\])?\s+must be one of the following values:(.*)", re.I | re.S)
+# Rate limits and dead tokens: every later call of a multi-call command fails the same way.
+_FATAL_CODES = {4, 17, 32, 613, 102, 190}
+
+
+def _not_enough_viewers(exc: GraphAPIError) -> bool:
+    return bool(_NOT_ENOUGH_VIEWERS.search(str(exc)))
+
+
+def _rejected_metrics(exc: GraphAPIError, asked: list[str]) -> list[str]:
+    """The requested metrics a code-100 error rejects; empty when it names none of them."""
+    if exc.code != 100:
+        return []
+    text = str(exc)
+    listed = _ALLOWED_METRICS.search(text)
+    if listed:
+        allowed = set(re.findall(r"\w+", listed.group(2).lower()))
+        rejected = [m for m in asked if m not in allowed]
+        index = listed.group(1)
+        if not rejected and index is not None and int(index) < len(asked):
+            rejected = [asked[int(index)]]
+        return rejected
+    return [m for m in asked if re.search(rf"(?<!\w){re.escape(m)}(?!\w)", text)]
+
+
+def _is_fatal(exc: GraphAPIError) -> bool:
+    code = exc.code
+    return (exc.status_code == 401 or code in _FATAL_CODES
+            or (isinstance(code, int) and 80001 <= code <= 80014))
 
 
 class GraphBackend(Backend):
@@ -66,6 +111,8 @@ class GraphBackend(Backend):
         self._client = client
         self._base = self.BASE_URLS[login_type]
         self._me_id_cache: str | None = ig_user_id or None
+        # media id -> (media_type, media_product_type), learned from listings
+        self._media_types_cache: dict[str, tuple[str | None, str | None]] = {}
 
     # ------------------------------------------------------------------
     # Helpers
@@ -247,9 +294,11 @@ class GraphBackend(Backend):
         ref = (ref or "").strip()
         me = self._me_id()
         if ref == "latest":
-            items = self._get(f"{me}/media", {"fields": "id", "limit": "1"}).get("data", [])
+            items = self._get(f"{me}/media", {"fields": "id,media_type,media_product_type",
+                                              "limit": "1"}).get("data", [])
             if not items:
                 raise ValueError("No posts found for the current account")
+            self._remember_types(items[:1])
             return str(items[0]["id"])
         if ref.isdigit():
             return ref
@@ -257,12 +306,13 @@ class GraphBackend(Backend):
         code = m.group(1) if m else ref
         after = None
         for _ in range(4):  # up to ~200 recent posts
-            params = {"fields": "id,shortcode,permalink", "limit": "50"}
+            params = {"fields": "id,shortcode,permalink,media_type,media_product_type", "limit": "50"}
             if after:
                 params["after"] = after
             page = self._get(f"{me}/media", params) or {}
             for item in page.get("data", []):
                 if item.get("shortcode") == code or f"/{code}/" in (item.get("permalink") or ""):
+                    self._remember_types([item])
                     return str(item["id"])
             after = ((page.get("paging") or {}).get("cursors") or {}).get("after")
             if not after or not (page.get("paging") or {}).get("next"):
@@ -587,10 +637,80 @@ class GraphBackend(Backend):
         params = {"fields": "id,name,media_count", "user_id": me}
         return self._get(hashtag_id, params)
 
-    # Media metrics valid for feed posts and reels after Meta's 2025 change
-    # (impressions/plays were replaced by views).
-    _MEDIA_INSIGHT_METRICS = "reach,views,likes,comments,saved,shares,total_interactions"
+    # Media metrics that fit each kind of media (Meta's 2025 set: views replaced
+    # impressions and plays). One metric a media type lacks fails the whole call.
+    _MEDIA_METRICS: dict[str, tuple[str, ...]] = {
+        "FEED": ("reach", "views", "likes", "comments", "saved", "shares", "total_interactions",
+                 "profile_visits", "follows"),
+        "REELS": ("reach", "views", "likes", "comments", "saved", "shares", "total_interactions",
+                  "ig_reels_avg_watch_time", "ig_reels_video_view_total_time"),
+        "STORY": ("reach", "views", "replies", "shares", "total_interactions", "navigation",
+                  "follows", "profile_visits"),
+    }
     _ACCOUNT_INSIGHT_METRICS = "reach,views,accounts_engaged,total_interactions,profile_links_taps"
+    INSIGHT_RETRIES = 3  # times a call is retried without the metrics Meta rejected
+
+    def _remember_types(self, items: list[dict]) -> None:
+        for item in items:
+            if item.get("id") is not None and item.get("media_type"):
+                self._media_types_cache[str(item["id"])] = (item["media_type"], item.get("media_product_type"))
+
+    def _media_types(self, media_id: str) -> tuple[str | None, str | None]:
+        """(media_type, media_product_type) of one of this account's posts."""
+        if media_id not in self._media_types_cache:
+            try:
+                info = self._get(media_id, {"fields": "media_type,media_product_type"}) or {}
+            except GraphAPIError as exc:
+                if _is_fatal(exc):
+                    raise
+                # Type unknown: ask for the feed set and let rejected metrics drop out.
+                return None, None
+            self._media_types_cache[media_id] = (info.get("media_type"), info.get("media_product_type"))
+        return self._media_types_cache[media_id]
+
+    @staticmethod
+    def _metric_kind(media_type: str | None, product_type: str | None) -> str:
+        """FEED, REELS or STORY: the metric set that fits this media."""
+        if product_type in ("REELS", "STORY"):
+            return product_type
+        if product_type is None and media_type == "VIDEO":
+            return "REELS"  # new videos are all reels; older feed videos say FEED
+        return "FEED"
+
+    def _insights(self, path: str, metrics: tuple[str, ...], params: dict[str, Any] | None = None,
+                  skip: set[str] | None = None) -> dict:
+        """GET an insights edge for `metrics`.
+
+        Meta fails the whole call over a single metric it doesn't offer (code 100 naming
+        it), so rejected metrics are dropped and the call retried, at most INSIGHT_RETRIES
+        times. `skip` holds metrics already known to fail and learns the new ones. Returns
+        `insights`, plus `dropped_metrics` and `not_enough_viewers` when they apply.
+        """
+        skip = set() if skip is None else skip
+        asked = [m for m in metrics if m not in skip]
+        data: Any = None
+        flags: dict[str, Any] = {}
+        for attempt in range(self.INSIGHT_RETRIES + 1):
+            if not asked:
+                break
+            try:
+                data = self._get(path, {**(params or {}), "metric": ",".join(asked)})
+                break
+            except GraphAPIError as exc:
+                if _not_enough_viewers(exc):
+                    flags["not_enough_viewers"] = True
+                    break
+                rejected = _rejected_metrics(exc, asked)
+                if not rejected or attempt == self.INSIGHT_RETRIES:
+                    raise
+                skip.update(rejected)
+                asked = [m for m in asked if m not in skip]
+        out: dict[str, Any] = {"insights": self._flatten_insights(data)}
+        dropped = [m for m in metrics if m in skip]
+        if dropped:
+            out["dropped_metrics"] = dropped
+        out.update(flags)
+        return out
 
     def profile_show(self) -> dict:
         me = self._me_id()
@@ -604,9 +724,21 @@ class GraphBackend(Backend):
         return out
 
     def analytics_insights(self, media_ref: str) -> dict:
-        media_ref = self._media_ref(media_ref)
-        data = self._get(f"{media_ref}/insights", {"metric": self._MEDIA_INSIGHT_METRICS})
-        return {"media_id": media_ref, "insights": self._flatten_insights(data)}
+        """Insights for one of this account's posts, with the metrics its type supports.
+
+        A post too new or too small for insights gives not_enough_viewers instead of an
+        error (Meta reports it as code 10, the same code as a missing permission).
+        """
+        media_id = self._media_ref(media_ref)
+        media_type, product_type = self._media_types(media_id)
+        out: dict[str, Any] = {"media_id": media_id}
+        if media_type:
+            out["media_type"] = media_type
+        if product_type:
+            out["product_type"] = product_type
+        kind = self._metric_kind(media_type, product_type)
+        out.update(self._insights(f"{media_id}/insights", self._MEDIA_METRICS[kind]))
+        return out
 
     def analytics_account(self) -> dict:
         me = self._me_id()

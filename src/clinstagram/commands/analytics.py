@@ -35,9 +35,11 @@ def hashtag(
 @analytics_app.command("insights")
 def insights(
     ctx: typer.Context,
-    media_id: str = typer.Argument(..., help="Media ID, shortcode, or post URL (Graph: numeric ID)"),
+    media_id: str = typer.Argument(..., help="Media ID, shortcode, or post URL ('latest' on Graph)"),
 ):
-    """Reach, views, saves, shares for one of your posts. Needs a professional account."""
+    """Reach, views, saves, shares for one of your posts, plus watch time for reels and
+    replies and navigation for stories. A post with too few viewers yet returns
+    not_enough_viewers: true (exit 0). Needs a professional account."""
     dispatch(ctx, Feature.ANALYTICS_INSIGHTS, lambda b: b.analytics_insights(media_id))
 
 
