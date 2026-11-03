@@ -301,8 +301,24 @@ class GraphBackend(Backend):
             waited += self.CONTAINER_POLL_SECONDS
 
     def _publish(self, me: str, container_id: str) -> dict:
+        """Publish a finished container; return the new media's id, permalink and shortcode."""
         self._wait_container(container_id)
-        return self._post(f"{me}/media_publish", {"creation_id": container_id})
+        media_id = self._post(f"{me}/media_publish", {"creation_id": container_id})["id"]
+        return {"id": media_id, "status": "published", **self._published_links(media_id)}
+
+    def _published_links(self, media_id: str) -> dict:
+        # The post is already live. A failed lookup must not fail the command: an error
+        # here would also let dispatch retry on the private API and post a second time.
+        try:
+            info = self._get(str(media_id), {"fields": "permalink,shortcode"}) or {}
+        except Exception as exc:
+            return {"permalink_error": str(exc)}
+        links = {}
+        if info.get("permalink"):
+            links["permalink"] = info["permalink"]
+        if info.get("shortcode"):
+            links["code"] = info["shortcode"]
+        return links
 
     def post_photo(
         self, media: str, caption: str = "", location: str = "", tags: list[str] | None = None
@@ -323,8 +339,7 @@ class GraphBackend(Backend):
         container_id = container["id"]
 
         # Step 2: publish
-        result = self._publish(me, container_id)
-        return {"id": result["id"], "status": "published"}
+        return self._publish(me, container_id)
 
     def post_video(
         self, media: str, caption: str = "", thumbnail: str = "", location: str = ""
@@ -345,8 +360,7 @@ class GraphBackend(Backend):
 
         container = self._post(f"{me}/media", payload)
         container_id = container["id"]
-        result = self._publish(me, container_id)
-        return {"id": result["id"], "status": "published"}
+        return self._publish(me, container_id)
 
     def post_reel(
         self, media: str, caption: str = "", thumbnail: str = "", audio: str = "",
@@ -388,8 +402,7 @@ class GraphBackend(Backend):
 
         container = self._post(f"{me}/media", payload)
         container_id = container["id"]
-        result = self._publish(me, container_id)
-        return {"id": result["id"], "status": "published"}
+        return self._publish(me, container_id)
 
     def post_carousel(self, media_list: list[str], caption: str = "") -> dict:
         me = self._me_id()
@@ -416,8 +429,7 @@ class GraphBackend(Backend):
         if caption:
             carousel_payload["caption"] = caption
         container = self._post(f"{me}/media", carousel_payload)
-        result = self._publish(me, container["id"])
-        return {"id": result["id"], "status": "published"}
+        return self._publish(me, container["id"])
 
     # ------------------------------------------------------------------
     # DMs (Facebook login only)
@@ -498,8 +510,7 @@ class GraphBackend(Backend):
 
         container = self._post(f"{me}/media", payload)
         container_id = container["id"]
-        result = self._publish(me, container_id)
-        return {"id": result["id"], "status": "published"}
+        return self._publish(me, container_id)
 
     def story_post_video(
         self, media: str, mentions: list[str] | None = None, link: str = ""
@@ -519,8 +530,7 @@ class GraphBackend(Backend):
 
         container = self._post(f"{me}/media", payload)
         container_id = container["id"]
-        result = self._publish(me, container_id)
-        return {"id": result["id"], "status": "published"}
+        return self._publish(me, container_id)
 
     def story_viewers(self, story_id: str) -> list[dict]:
         params = {"fields": "id,username"}

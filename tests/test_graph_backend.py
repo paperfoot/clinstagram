@@ -121,6 +121,10 @@ def _publishing_backend(statuses):
         if request.method == "POST" and path == "/v21.0/42/media_publish":
             calls.append("publish")
             return httpx.Response(200, json={"id": "m1"})
+        if request.method == "GET" and path == "/v21.0/m1":
+            calls.append("links")
+            return httpx.Response(200, json={"permalink": "https://www.instagram.com/reel/DQx1/",
+                                             "shortcode": "DQx1", "id": "m1"})
         raise AssertionError(f"unexpected {request.method} {path}")
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -132,8 +136,9 @@ def _publishing_backend(statuses):
 def test_reel_waits_for_container_to_finish_before_publishing():
     backend, calls = _publishing_backend(["IN_PROGRESS", "IN_PROGRESS", "FINISHED"])
     result = backend.post_reel("https://example.com/r.mp4", caption="hi")
-    assert result == {"id": "m1", "status": "published"}
-    assert calls == ["poll", "poll", "poll", "publish"]
+    assert result == {"id": "m1", "status": "published",
+                      "permalink": "https://www.instagram.com/reel/DQx1/", "code": "DQx1"}
+    assert calls == ["poll", "poll", "poll", "publish", "links"]
 
 
 def test_reel_is_shared_to_feed():
@@ -160,6 +165,92 @@ def test_reel_is_shared_to_feed():
     assert sent["media_type"] == "REELS"
     assert sent["share_to_feed"] == "true"
     assert sent["audio_name"] == "Original"
+
+
+def _publish_server(links):
+    """Graph fake for every publish path. `links` answers GET /m1: a JSON body, an
+    httpx.Response, or an exception to raise."""
+    log: list[tuple[str, str, str]] = []
+    containers = iter(range(1, 100))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        log.append((request.method, path, request.url.params.get("fields", "")))
+        if path == "/v21.0/me":
+            return httpx.Response(200, json={"id": "42"})
+        if request.method == "POST" and path == "/v21.0/42/media":
+            return httpx.Response(200, json={"id": f"c{next(containers)}"})
+        if request.method == "GET" and path.startswith("/v21.0/c"):
+            return httpx.Response(200, json={"status_code": "FINISHED"})
+        if request.method == "POST" and path == "/v21.0/42/media_publish":
+            return httpx.Response(200, json={"id": "m1"})
+        if request.method == "GET" and path == "/v21.0/m1":
+            if isinstance(links, Exception):
+                raise links
+            return links if isinstance(links, httpx.Response) else httpx.Response(200, json=links)
+        raise AssertionError(f"unexpected {request.method} {path}")
+
+    return handler, log
+
+
+_PUBLISHERS = [
+    ("post_photo", ("https://example.com/p.jpg",), "ig"),
+    ("post_video", ("https://example.com/v.mp4",), "ig"),
+    ("post_reel", ("https://example.com/r.mp4",), "ig"),
+    ("post_carousel", (["https://example.com/a.jpg", "https://example.com/b.mp4"],), "ig"),
+    ("story_post_photo", ("https://example.com/s.jpg",), "fb"),
+    ("story_post_video", ("https://example.com/s.mp4",), "fb"),
+]
+
+
+def _publisher(handler, login_type):
+    backend = GraphBackend(token="tok", login_type=login_type,
+                           client=httpx.Client(transport=httpx.MockTransport(handler)),
+                           ig_user_id="42" if login_type == "fb" else None)
+    backend._sleep = lambda s: None
+    return backend
+
+
+@pytest.mark.parametrize("method,args,login_type", _PUBLISHERS)
+def test_every_publish_returns_permalink_and_code(method, args, login_type):
+    handler, log = _publish_server({"id": "m1", "permalink": "https://www.instagram.com/p/DQx1/",
+                                    "shortcode": "DQx1"})
+    result = getattr(_publisher(handler, login_type), method)(*args)
+    assert result == {"id": "m1", "status": "published",
+                      "permalink": "https://www.instagram.com/p/DQx1/", "code": "DQx1"}
+    assert [entry for entry in log if entry[1] == "/v21.0/m1"] == [("GET", "/v21.0/m1", "permalink,shortcode")]
+
+
+@pytest.mark.parametrize("method,args,login_type", _PUBLISHERS)
+@pytest.mark.parametrize("links", [
+    httpx.Response(400, json={"error": {"message": "(#10) Application does not have permission for this action",
+                                        "type": "OAuthException", "code": 10}}),
+    httpx.Response(500, text="upstream hiccup"),
+    httpx.ConnectError("connection reset"),
+])
+def test_publish_survives_a_failed_permalink_lookup(method, args, login_type, links):
+    handler, log = _publish_server(links)
+    result = getattr(_publisher(handler, login_type), method)(*args)
+    assert result["id"] == "m1"
+    assert result["status"] == "published"
+    assert "permalink" not in result and "code" not in result
+    assert result["permalink_error"]
+    assert sum(1 for entry in log if entry[1] == "/v21.0/42/media_publish") == 1
+
+
+def test_cli_failed_permalink_lookup_never_reposts_on_private(monkeypatch, tmp_path):
+    # A Meta permission error after publishing must not trigger the private-API fallback:
+    # that would put the same post up twice.
+    handler, log = _publish_server(httpx.Response(400, json={"error": {
+        "message": "(#10) Application does not have permission for this action", "code": 10}}))
+    run, private = _cli(monkeypatch, tmp_path, graph=_publisher(handler, "ig"),
+                        backends=("graph_ig", "private"), mode="private-enabled")
+    result, body = run("post", "photo", "https://example.com/p.jpg", "--caption", "hi")
+    assert result.exit_code == 0, result.output
+    assert body["backend_used"] == "graph_ig"
+    assert body["data"]["id"] == "m1"
+    assert "(#10)" in body["data"]["permalink_error"]
+    private.post_photo.assert_not_called()
 
 
 def test_failed_container_is_never_published():
