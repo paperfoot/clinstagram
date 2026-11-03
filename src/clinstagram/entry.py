@@ -13,6 +13,7 @@ import sys
 GROUPS = frozenset({
     "auth", "config", "profile", "post", "dm", "story", "comments", "analytics",
     "followers", "user", "like", "hashtag", "media", "skill", "account",
+    "safety",
 })
 # Top-level commands that need no command group at all.
 STANDALONE = frozenset({"doctor", "update", "activity"})

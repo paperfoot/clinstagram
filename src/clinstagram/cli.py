@@ -380,6 +380,7 @@ def _group_loaders() -> dict:
         "hashtag": ("clinstagram.commands.hashtag", "hashtag_app"),
         "media": ("clinstagram.commands.media", "media_app"),
         "skill": ("clinstagram.commands.skill_install", "skill_app"),
+        "safety": ("clinstagram.commands.safety", "safety_app"),
     }
 
 

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterator, Optional
 
 from clinstagram.backends.base import Backend
+from clinstagram.safety import SafetyBlocked, SafetyGuard, guard_from_click_context, raise_blocked
 
 _VIDEO_SUFFIXES = (".mp4", ".mov", ".m4v", ".avi")
 
@@ -316,17 +317,24 @@ def _wrap_error(fn_name: str, exc: Exception) -> PrivateAPIError:
     return PrivateAPIError(f"{fn_name} failed: {exc}")
 
 
+_AUTO: Any = object()
+
+
 class PrivateBackend(Backend):
     """Instagram Private API backend via instagrapi."""
 
-    def __init__(self, client: Any):
+    def __init__(self, client: Any, guard: Optional[SafetyGuard] = _AUTO):
         """
         Parameters
         ----------
         client : instagrapi.Client
             An already-authenticated instagrapi Client instance.
+        guard : SafetyGuard, optional
+            Write-safety ledger for the account. Defaults to the one for the CLI
+            invocation in progress; None (or no CLI context) disables the checks.
         """
         self._cl = client
+        self._safety = guard_from_click_context() if guard is _AUTO else guard
         _install_ffmpeg_thumbnailer()
         # In-memory cache: username → (user_pk_str, user_object)
         # Eliminates redundant user_info_by_username API calls within a session.
@@ -1039,3 +1047,86 @@ class PrivateBackend(Backend):
             raise
         except Exception as exc:
             raise _wrap_error("user_tagged", exc)
+
+
+# ----------------------------------------------------------------------
+# Write safety: every private-API write goes through one wrapper
+# ----------------------------------------------------------------------
+
+# Public method -> ledger action. Every other public method is a read.
+_WRITE_ACTIONS: dict[str, str] = {
+    "post_photo": "post", "post_video": "post", "post_reel": "post", "post_carousel": "post",
+    "story_post_photo": "story", "story_post_video": "story",
+    "dm_send": "dm", "dm_send_media": "dm",
+    "comments_add": "comment", "comments_reply": "comment",
+    "like_post": "like", "unlike_post": "like",
+    "comments_like": "like", "comments_unlike": "like",
+    "follow": "follow", "unfollow": "follow",
+    "profile_edit": "profile_edit", "profile_picture": "profile_edit",
+    "profile_picture_remove": "profile_edit", "profile_convert": "profile_edit",
+    "post_delete": "moderation", "post_edit": "moderation", "story_delete": "moderation",
+    "comments_delete": "moderation", "comments_pin": "moderation",
+    "comments_unpin": "moderation", "dm_approve": "moderation", "dm_seen": "moderation",
+}
+
+
+def _username_change(fn: Any, self: Any, args: tuple, kwargs: dict) -> bool:
+    if fn.__name__ != "profile_edit":
+        return False
+    import inspect
+
+    bound = inspect.signature(fn).bind(self, *args, **kwargs)
+    return bound.arguments.get("username") is not None
+
+
+def _guard_write(fn: Any, action: str) -> Any:
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(self: "PrivateBackend", *args: Any, **kwargs: Any) -> Any:
+        guard = self._safety
+        if guard is None:
+            return fn(self, *args, **kwargs)
+        try:
+            reservation = guard.begin(
+                action, username_change=_username_change(fn, self, args, kwargs),
+                source=fn.__name__,
+            )
+        except SafetyBlocked as blocked:
+            raise_blocked(blocked)
+        try:
+            return fn(self, *args, **kwargs)
+        except BaseException as exc:
+            if not isinstance(exc, Exception) or guard.record_block(exc, fn.__name__) is None:
+                guard.release(reservation)  # never reached Instagram, or failed outright
+            raise
+
+    return wrapper
+
+
+def _guard_read(fn: Any) -> Any:
+    """Reads are never refused, but a throttle or block on one still starts the
+    account's write cooldown."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(self: "PrivateBackend", *args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(self, *args, **kwargs)
+        except Exception as exc:
+            if self._safety is not None:
+                self._safety.record_block(exc, fn.__name__)
+            raise
+
+    return wrapper
+
+
+def _install_safety(cls: type) -> None:
+    for name, attr in list(vars(cls).items()):
+        if name.startswith("_") or not callable(attr):
+            continue
+        setattr(cls, name, _guard_write(attr, _WRITE_ACTIONS[name]) if name in _WRITE_ACTIONS
+                else _guard_read(attr))
+
+
+_install_safety(PrivateBackend)

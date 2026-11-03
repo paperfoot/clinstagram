@@ -89,6 +89,12 @@ class RateLimits(_Model):
     private_dm_per_hour: int = 30
     private_follows_per_day: int = 20
     private_likes_per_hour: int = 20
+    # Enforced per account by clinstagram.safety (rolling windows, -1 disables a cap).
+    private_comments_per_hour: int = 5
+    private_posts_per_day: int = 3
+    private_stories_per_day: int = 8
+    private_profile_edits_per_day: int = 1  # bio, name, username, picture, account type
+    private_username_change_days: int = 14  # one username change per N days (0 disables)
     request_delay_min: float = 2.0
     request_delay_max: float = 5.0
     request_jitter: bool = True
