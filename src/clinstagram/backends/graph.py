@@ -18,17 +18,20 @@ _USERNAME_RE = re.compile(r"^[a-zA-Z0-9._]{1,30}$")
 class GraphAPIError(Exception):
     """Raised when the Instagram/Facebook Graph API returns an error.
 
-    `needs_new_token` marks a refusal only a new token fixes; the CLI, which knows the
-    account, then says how to store one for it.
+    str() is Meta's message plus its user-facing detail; `api_message` is Meta's message
+    alone, for parsing. `needs_new_token` marks a refusal only a new token fixes; the CLI,
+    which knows the account, then says how to store one for it.
     """
 
     def __init__(self, status_code: int, error_type: str, message: str, code: int | None = None,
-                 subcode: int | None = None, *, needs_new_token: bool = False):
+                 subcode: int | None = None, *, needs_new_token: bool = False,
+                 api_message: str | None = None):
         self.status_code = status_code
         self.error_type = error_type
         self.code = code
         self.subcode = subcode
         self.needs_new_token = needs_new_token
+        self.api_message = message if api_message is None else api_message
         super().__init__(message)
 
 
@@ -37,18 +40,18 @@ def _extract_error(response: httpx.Response) -> GraphAPIError:
     try:
         body = response.json()
         err = body.get("error", {})
-        message = err.get("message", response.text)
+        api_message = err.get("message", response.text)
         # Meta often puts the useful part in error_user_msg ("Invalid parameter" alone
         # doesn't say the post predates the switch to a business account).
         detail = err.get("error_user_msg") or err.get("error_user_title")
-        if detail and detail not in message:
-            message = f"{message}: {detail}"
+        message = f"{api_message}: {detail}" if detail and detail not in api_message else api_message
         return GraphAPIError(
             status_code=response.status_code,
             error_type=err.get("type", "Unknown"),
             message=message,
             code=err.get("code"),
             subcode=err.get("error_subcode"),
+            api_message=api_message,
         )
     except Exception:
         return GraphAPIError(
@@ -68,9 +71,31 @@ def _check(response: httpx.Response) -> dict | list:
 # Meta answers code 10 both for "the token lacks this permission" and for this benign
 # case: the post hasn't reached enough viewers to have insights yet.
 _NOT_ENOUGH_VIEWERS = re.compile(r"not enough viewers", re.I)
+_LIST_SEP = r"(?:\s*,\s*(?:and\s+)?|\s+and\s+)"
+_METRIC_LIST = rf"\w+(?:{_LIST_SEP}\w+)*"  # "reach", "reach, views and likes"
+# For a form that starts with the list: bounded, or each word of a long list would start
+# a fresh scan of the rest (quadratic). Meta turns down a few metrics at a time.
+_FEW_METRICS = rf"\w+(?:{_LIST_SEP}\w+){{0,9}}"
 # "(#100) metric[3] must be one of the following values: reach, views, ..." lists what is
-# allowed, so the rejected metrics are the requested ones it leaves out.
-_ALLOWED_METRICS = re.compile(r"\bmetric(?:\[(\d+)\])?\s+must be one of the following values:(.*)", re.I | re.S)
+# allowed, so the rejected metrics are the requested ones it leaves out. Only the list
+# counts, not what follows it.
+_ALLOWED_METRICS = re.compile(
+    rf"\bmetric(?:\[(\d+)\])?\s+must be one of the following values:\s*({_METRIC_LIST})", re.I)
+# Wordings that name the metrics Meta turned down, so metrics a message names as offered
+# ("... Supported metrics: reach, views") stay asked for.
+_NOT_OFFERED = (r"(?:(?:is|are)(?:n't| not| no longer) (?:supported|available|valid|allowed)"
+                r"|(?:is|are|has been|have been) (?:deprecated|removed))")
+_REJECTIONS = tuple(re.compile(form, re.I) for form in (
+    # "does not support the plays metric"
+    rf"\bdo(?:es)?(?: not|n't) support (?:the )?({_METRIC_LIST}) metrics?\b",
+    # "the impressions metric is no longer supported", "Metric views is not supported"
+    rf"\b({_FEW_METRICS})(?: metrics?)? {_NOT_OFFERED}\b",
+    # "The following metrics are not supported for this media: profile_visits, follows"
+    # (within one clause: in "not available here, valid metrics: reach" the list is offered)
+    rf"(?:\bnot|\bno longer|n't) (?:support(?:ed)?|available|valid|allowed)\b[^:.,;]*:\s*({_METRIC_LIST})",
+    # "Invalid metric: website_clicks"
+    rf"\b(?:unsupported|invalid|unknown) metrics?\b:?\s*({_METRIC_LIST})",
+))
 # Rate limits and dead tokens: every later call of a multi-call command fails the same way.
 _FATAL_CODES = {4, 17, 32, 613, 102, 190}
 
@@ -80,10 +105,10 @@ def _not_enough_viewers(exc: GraphAPIError) -> bool:
 
 
 def _rejected_metrics(exc: GraphAPIError, asked: list[str]) -> list[str]:
-    """The requested metrics a code-100 error rejects; empty when it names none of them."""
+    """The requested metrics a code-100 error rejects; empty when it doesn't say which."""
     if exc.code != 100:
         return []
-    text = str(exc)
+    text = exc.api_message  # Meta's own words: the user message it adds may name metrics too
     listed = _ALLOWED_METRICS.search(text)
     if listed:
         allowed = set(re.findall(r"\w+", listed.group(2).lower()))
@@ -92,7 +117,15 @@ def _rejected_metrics(exc: GraphAPIError, asked: list[str]) -> list[str]:
         if not rejected and index is not None and int(index) < len(asked):
             rejected = [asked[int(index)]]
         return rejected
-    return [m for m in asked if re.search(rf"(?<!\w){re.escape(m)}(?!\w)", text)]
+    named = {name.lower() for form in _REJECTIONS for hit in form.finditer(text)
+             for name in re.findall(r"\w+", hit.group(1))}
+    rejected = [m for m in asked if m in named]
+    if rejected:
+        return rejected
+    # Wording none of the forms knows: a message naming one requested metric is about that
+    # one, but one naming several may be listing the metrics Meta does offer.
+    mentioned = [m for m in asked if re.search(rf"(?<!\w){re.escape(m)}(?!\w)", text)]
+    return mentioned if len(mentioned) == 1 else []
 
 
 def _is_fatal(exc: GraphAPIError) -> bool:

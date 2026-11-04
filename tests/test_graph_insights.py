@@ -161,6 +161,72 @@ def test_metric_dropping_gives_up_after_three_retries():
     assert len(fake.calls("/777/insights")) == 4  # the first try plus three retries
 
 
+@pytest.mark.parametrize("message,dropped", [
+    # Names the bad metric, then the good ones: only the bad one goes.
+    ("(#100) The follows metric is not supported for this media. Supported metrics: reach, views, likes",
+     ["follows"]),
+    ("(#100) Metric follows is not available for this media; supported metrics are reach, views, likes",
+     ["follows"]),
+    ("(#100) The Media Insights API does not support the profile_visits metric for this media product type",
+     ["profile_visits"]),
+    ("(#100) Starting from version v22.0, the follows metric is no longer supported. "
+     "Please use the views metric instead", ["follows"]),
+    ("(#100) The following metrics are not supported for this media: saved, shares. "
+     "Supported metrics: reach, views", ["saved", "shares"]),
+    ("(#100) Invalid metric: total_interactions", ["total_interactions"]),
+    ("(#100) The metrics saved, shares and follows are not supported for this media",
+     ["saved", "shares", "follows"]),
+    # The list after the comma is what Meta offers, not what it refused.
+    ("(#100) Metric follows is not supported for this media, valid metrics: reach, views, likes",
+     ["follows"]),
+    # Wording we don't know, about one requested metric: that one.
+    ("(#100) Cannot request profile_visits for this media", ["profile_visits"]),
+])
+def test_only_the_metrics_meta_turns_down_are_dropped(message, dropped):
+    fake = FakeGraph({
+        "GET /777": {"media_type": "IMAGE", "media_product_type": "FEED"},
+        "GET /777/insights": [graph_error(100, message), insights(reach=9)],
+    })
+    result = fake.backend().analytics_insights("777")
+    assert result["dropped_metrics"] == dropped
+    assert fake.metrics("/777/insights")[1] == ",".join(m for m in FEED.split(",") if m not in dropped)
+
+
+def test_unknown_wording_naming_several_metrics_is_raised_not_guessed():
+    # It may be listing what Meta does offer; dropping them all would lose good metrics.
+    fake = FakeGraph({
+        "GET /777": {"media_type": "IMAGE", "media_product_type": "FEED"},
+        "GET /777/insights": graph_error(100, "(#100) For this media pick from reach, views, likes"),
+    })
+    with pytest.raises(GraphAPIError, match="pick from"):
+        fake.backend().analytics_insights("777")
+    assert len(fake.calls("/777/insights")) == 1
+
+
+def test_allowed_values_are_read_from_metas_message_not_its_user_message():
+    # _extract_error appends error_user_msg; a metric named there isn't one Meta allows.
+    fake = FakeGraph({
+        "GET /777": {"media_type": "IMAGE", "media_product_type": "FEED"},
+        "GET /777/insights": [
+            graph_error(100, "(#100) metric must be one of the following values: reach, views, likes, "
+                             "comments, saved, shares, total_interactions, profile_visits",
+                        error_user_msg="The follows metric isn't available for this media."),
+            insights(reach=2),
+        ],
+    })
+    result = fake.backend().analytics_insights("777")
+    assert result["dropped_metrics"] == ["follows"]
+
+
+def test_allowed_values_list_ends_where_the_list_ends():
+    from clinstagram.backends.graph import _rejected_metrics
+
+    # No metric[N] index here, so the old whole-message capture let "follows" count as allowed.
+    exc = GraphAPIError(400, "OAuthException", "(#100) metric must be one of the following values: "
+                                               "reach, likes. Ask for follows next time", code=100)
+    assert _rejected_metrics(exc, ["reach", "follows", "likes"]) == ["follows"]
+
+
 def test_code_100_that_names_no_requested_metric_is_raised():
     fake = FakeGraph({
         "GET /777": {"media_type": "IMAGE", "media_product_type": "FEED"},
@@ -182,6 +248,7 @@ def test_meta_user_message_is_kept_in_the_error():
     with pytest.raises(GraphAPIError) as err:
         fake.backend().analytics_insights("777")
     assert "posted before the account was converted" in str(err.value)
+    assert err.value.api_message == "Invalid parameter"
     assert err.value.subcode == 2108006
 
 
