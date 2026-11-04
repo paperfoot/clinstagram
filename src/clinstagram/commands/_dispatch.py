@@ -407,6 +407,17 @@ def stage(source: str, backend_name: str) -> str:
     return resolve_media(source, needs_url=needs_url)
 
 
+# Where the Meta app dashboard makes a new token (the fix for both breaks on 3 Nov 2026).
+_NEW_TOKEN_STEPS = ("Instagram API → API setup with Unified login → 2. Generate access tokens → "
+                    "Generate token on the account's row")
+
+
+def _graph_reconnect(account: str, backend_name: str) -> str:
+    """The command that stores a new Graph token. It names the account: without
+    --account, auth connect-* writes to the default account."""
+    return f"clinstagram --account {account} auth connect-{backend_name.split('_', 1)[1]} --token <token>"
+
+
 def _backend_remediation(backend_name: str) -> str:
     if backend_name == "private":
         return "Run: clinstagram auth login"
@@ -623,6 +634,16 @@ def dispatch(
             _close_http_client(ctx)
             dispatch(ctx, feature, action, preferred_backend="private", render=render)
             return
+        elif kind == "permission" and getattr(exc, "needs_new_token", False):
+            # The backend saw the token refused what every token may read: another
+            # permission won't help, a new token will.
+            acct = ctx.obj.get("account") or "default"
+            output_error(ctx, CLIError(
+                exit_code=ExitCode.CAPABILITY_UNAVAILABLE,
+                error=f"Meta refused the {backend_name} token for '{acct}'. {error_str}",
+                remediation=(f"Not retryable. Generate a new token in the Meta app dashboard "
+                             f"({_NEW_TOKEN_STEPS}), then: {_graph_reconnect(acct, backend_name)}"),
+            ))
         elif kind == "permission":
             acct = ctx.obj.get("account") or "default"
             # A Graph-only command (private_fallback=False) can't take the private-API route.
@@ -639,8 +660,7 @@ def dispatch(
             ))
         elif kind == "auth":
             acct = ctx.obj.get("account") or "default"
-            fix = (f"Generate a new token in the Meta app, then: clinstagram --account {acct} auth connect-"
-                   f"{backend_name.split('_', 1)[1]} --token <token>"
+            fix = (f"Generate a new token in the Meta app, then: {_graph_reconnect(acct, backend_name)}"
                    if str(backend_name).startswith("graph_")
                    else f"Run: clinstagram --account {acct} auth login -u <username>")
             output_error(ctx, CLIError(

@@ -211,13 +211,13 @@ def test_missing_permission_with_the_same_code_still_raises():
 # ── Commands ────────────────────────────────────────────────────────
 
 
-def graph_cli(monkeypatch, tmp_path, backend: GraphBackend, backends=("graph_ig",)):
+def graph_cli(monkeypatch, tmp_path, backend: GraphBackend, backends=("graph_ig",), account="default"):
     """Run clinstagram --json against `backend`; a mock stands in for the private API."""
     from clinstagram.auth.keychain import BACKEND_TOKEN_MAP, SecretsStore
 
     secrets = SecretsStore(backend="memory")
     for name in backends:
-        secrets.set("default", BACKEND_TOKEN_MAP[name], "fake-token")
+        secrets.set(account, BACKEND_TOKEN_MAP[name], "fake-token")
     private = MagicMock()
     private.name = "private"
     monkeypatch.setattr("clinstagram.commands._dispatch._get_secrets", lambda ctx: secrets)
@@ -477,11 +477,31 @@ def test_summary_explains_a_token_meta_cut_off():
     fake = FakeGraph(summary_routes(**{"GET /42/media": NO_PERMISSION}))
     with pytest.raises(GraphAPIError) as err:
         summary_backend(fake).analytics_summary()
-    assert err.value.code == 10
+    assert err.value.code == 10 and err.value.needs_new_token
     message = str(err.value)
-    assert "refused its posts" in message and "(#10) Application does not have permission" in message
-    assert "Generate token on the account's row" in message
-    assert "clinstagram auth connect-ig --token <token>" in message
+    assert "refuses its posts" in message and "(#10) Application does not have permission" in message
+    assert "cut off on Meta's side" in message
+    # The backend doesn't know the account, so it names no command: one without
+    # --account would overwrite the default account's token.
+    assert "clinstagram" not in message
+
+
+def test_summary_treats_a_refused_profile_as_a_cut_off_token():
+    # 3 Nov 2026, the first break: every call, the profile read included, said (#200).
+    fake = FakeGraph(summary_routes(**{"GET /me": graph_error(200, "(#200) API access blocked.")}))
+    with pytest.raises(GraphAPIError) as err:
+        summary_backend(fake).analytics_summary()
+    assert err.value.code == 200 and err.value.needs_new_token
+    assert "refuses this account's own profile ((#200) API access blocked.)" in str(err.value)
+    assert len(fake.requests) == 1
+
+
+def test_only_the_summary_marks_a_refusal_as_needing_a_new_token():
+    fake = FakeGraph({"GET /777": {"media_type": "IMAGE", "media_product_type": "FEED"},
+                      "GET /777/insights": NO_PERMISSION})
+    with pytest.raises(GraphAPIError) as err:
+        fake.backend().analytics_insights("777")
+    assert not err.value.needs_new_token  # could be a missing insights permission
 
 
 @pytest.mark.parametrize("fatal", [
@@ -524,9 +544,31 @@ def test_cli_summary_token_cut_off_is_exit_7_without_private_rerun(monkeypatch, 
     run, private = graph_cli(monkeypatch, tmp_path, summary_backend(fake), backends=("graph_ig", "private"))
     result, body = run("analytics", "summary")
     assert result.exit_code == 7
-    assert "Generate token on the account's row" in body["error"]
+    # ops/schedule.py in arn-instagram spots a refused token by "permission" in the error.
+    assert "(#10) Application does not have permission" in body["error"]
+    assert "Generate token on the account's row" in body["remediation"]
     assert "--backend private" not in body["remediation"]  # the summary can't go that way
     assert private.method_calls == []
+
+
+@pytest.mark.parametrize("backends,login_type,ig_user_id", [
+    (("graph_ig",), "ig", None),
+    (("graph_fb",), "fb", "42"),
+])
+def test_cli_summary_cut_off_says_how_to_reconnect_this_account(monkeypatch, tmp_path, backends,
+                                                                login_type, ig_user_id):
+    # auth connect-* writes to the default account unless told otherwise, so the fix for
+    # --account channel must say --account channel, and must not ask for a permission.
+    fake = FakeGraph(summary_routes(**{"GET /42/media": NO_PERMISSION}))
+    backend = summary_backend(fake, login_type, ig_user_id)
+    run, _ = graph_cli(monkeypatch, tmp_path, backend, backends=backends, account="channel")
+    result, body = run("--account", "channel", "analytics", "summary")
+    assert result.exit_code == 7, result.output
+    suffix = backends[0].split("_")[1]
+    assert body["error"].startswith(f"Meta refused the {backends[0]} token for 'channel'. Meta reads")
+    assert body["remediation"].endswith(
+        f"then: clinstagram --account channel auth connect-{suffix} --token <token>")
+    assert "instagram_manage_insights" not in body["remediation"]
 
 
 def test_cli_summary_needs_graph(monkeypatch, tmp_path):

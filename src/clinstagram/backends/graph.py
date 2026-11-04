@@ -16,14 +16,19 @@ _USERNAME_RE = re.compile(r"^[a-zA-Z0-9._]{1,30}$")
 
 
 class GraphAPIError(Exception):
-    """Raised when the Instagram/Facebook Graph API returns an error."""
+    """Raised when the Instagram/Facebook Graph API returns an error.
+
+    `needs_new_token` marks a refusal only a new token fixes; the CLI, which knows the
+    account, then says how to store one for it.
+    """
 
     def __init__(self, status_code: int, error_type: str, message: str, code: int | None = None,
-                 subcode: int | None = None):
+                 subcode: int | None = None, *, needs_new_token: bool = False):
         self.status_code = status_code
         self.error_type = error_type
         self.code = code
         self.subcode = subcode
+        self.needs_new_token = needs_new_token
         super().__init__(message)
 
 
@@ -97,6 +102,17 @@ def _is_fatal(exc: GraphAPIError) -> bool:
 
 
 _PERMISSION_CODES = {3, 10} | set(range(200, 300))  # the app or token lacks the permission
+
+
+def _cut_off(exc: GraphAPIError, what: str) -> GraphAPIError:
+    """A refusal of the account's own profile or posts, which every token may read: on
+    3 Nov 2026 that was a token Meta had cut off, and a new token fixed it."""
+    return GraphAPIError(
+        exc.status_code, exc.error_type,
+        f"{what} ({exc}). A token that worked before and now does this was cut off on Meta's "
+        "side, as seen after Boost and Facebook-linking changes",
+        code=exc.code, subcode=exc.subcode, needs_new_token=True,
+    )
 
 
 def _first_line(text: str | None, width: int = 80) -> str | None:
@@ -793,10 +809,16 @@ class GraphBackend(Backend):
         list, then one insights call per post and per story. Add one for a Facebook-login
         token with no stored IG user id, and a retry per media type for a metric Meta
         rejects (learned once, then left out). Dead tokens and rate limits stop the
-        summary, and so does a refused post list; any other failure is reported where it
-        happened.
+        summary, and so does a refused profile or post list (raised with needs_new_token);
+        any other failure is reported where it happened.
         """
-        out: dict[str, Any] = {"profile": self._summary_profile()}
+        try:
+            out: dict[str, Any] = {"profile": self._summary_profile()}
+        except GraphAPIError as exc:
+            if exc.code in _PERMISSION_CODES:
+                # The first break on 3 Nov 2026: "(#200) API access blocked" on every call.
+                raise _cut_off(exc, "Meta refuses this account's own profile") from exc
+            raise
         me = self._me_id()
         errors: dict[str, str] = {}
         try:
@@ -810,17 +832,8 @@ class GraphBackend(Backend):
                                               "limit": str(limit)}).get("data", [])
         except GraphAPIError as exc:
             if exc.code in _PERMISSION_CODES:
-                # Profile fine, posts refused: how a token Meta cut off looks (3 Nov 2026).
-                raise GraphAPIError(
-                    exc.status_code, exc.error_type,
-                    f"Meta read this account's profile but refused its posts ({exc}). A token that "
-                    "worked before and now does this has been cut off on Meta's side (seen after "
-                    "Boost and Facebook-linking changes): generate a new one in the Meta app "
-                    "dashboard (Instagram API → API setup with Unified login → 2. Generate access "
-                    "tokens → Generate token on the account's row), then run: clinstagram auth "
-                    f"connect-{self._login_type} --token <token>",
-                    code=exc.code, subcode=exc.subcode,
-                ) from exc
+                # The second break on 3 Nov 2026: profile fine, posts refused with (#10).
+                raise _cut_off(exc, "Meta reads this account's profile but refuses its posts") from exc
             raise
         skip: dict[str, set[str]] = {}  # media group -> metrics Meta rejected for it this run
         out["media"] = [
