@@ -13,10 +13,10 @@ pip install -e ".[dev]"
 ## Running Tests
 
 ```bash
-pytest tests/ -v
+uv run --extra dev pytest -q   # pyproject points tests at src/, no PYTHONPATH needed
 ```
 
-All 120 tests should pass before you submit a PR.
+All tests (468 on 4 Nov 2026) should pass before you submit a PR.
 
 ## How to Contribute
 

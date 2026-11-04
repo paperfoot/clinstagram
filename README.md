@@ -75,7 +75,7 @@ For Business and Creator accounts, connect Meta's official API as well. Posts, r
 You need a Meta developer app with the Instagram API use case, and the account added to it as an Instagram tester. The app's dashboard then gives you a token for that account. Hand it to clinstagram with the account's Instagram ID, which the dashboard shows next to it:
 
 ```bash
-clinstagram --account brand auth connect-fb --token <token> --ig-user-id <id>
+pbpaste | clinstagram --account brand auth connect-fb --token-stdin --ig-user-id <id>
 clinstagram account list
 ```
 

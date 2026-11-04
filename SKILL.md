@@ -46,10 +46,13 @@ Each row: `name` (pass it as `--account NAME`), `username`, `backends`, `ig_user
 Connect the official API with a token from a Meta app (Instagram API use case, "unified login" configuration, the account added as an Instagram Tester):
 
 ```bash
-clinstagram --account NAME auth connect-fb --token <EAA… token> --ig-user-id <Instagram user ID shown next to the account in the Meta app>
+pbpaste | clinstagram --account NAME auth connect-fb --token-stdin --ig-user-id <Instagram user ID shown next to the account in the Meta app>
 ```
 
-`--ig-user-id` is needed for these system-user tokens: their `/me` has no Instagram account.
+- `--ig-user-id` is needed for these system-user tokens: their `/me` has no Instagram account.
+- Pass tokens on stdin (`--token-stdin`), never as `--token <t>`: argv shows up in `ps` and shell history. It refuses an empty token, one with spaces or line breaks inside, and a terminal on stdin.
+- Storing checks the token live. The data has `verified` (true, false, or missing when it couldn't be checked), `media_access`, `media_count` and, when broken, a `remediation`. The token is always kept and the exit is 0.
+- **A token that reads the profile but not the posts is broken.** The errors are "(#10) Application does not have permission", "(#200) API access blocked" or "Cannot call API for app … on behalf of user …", and media_count reads 0. It happened after Instagram's Boost flow linked the account to Facebook. Make a new token: Meta app dashboard → Instagram API → API setup with Unified login → 2. Generate access tokens → Generate token on the account's row. Then store it again. `auth probe` reports `reachable: true` for a Graph backend only when its media list reads; run it after any Boost.
 
 ## Quick Start
 
@@ -66,8 +69,8 @@ clinstagram config mode hybrid-safe      # Graph primary, private read-only (def
 clinstagram config mode private-enabled  # Full access, user accepts risk
 
 # Connect backends
-clinstagram auth connect-ig --token ...   # Store Instagram Login token
-clinstagram auth connect-fb --token ... [--ig-user-id ID]  # Facebook Login or Meta system-user token
+pbpaste | clinstagram auth connect-ig --token-stdin   # Store an Instagram Login token
+pbpaste | clinstagram auth connect-fb --token-stdin [--ig-user-id ID]  # Facebook Login or Meta system-user token
 clinstagram auth login         # Private API (username/password/2FA via instagrapi)
 ```
 
@@ -79,11 +82,11 @@ clinstagram auth login         # Private API (username/password/2FA via instagra
 | `doctor` | `doctor [--deep] [--account NAME]` | Check environment and session health |
 | `update` | `update [--check] [--yes] [--pre]` | Check for or perform clinstagram updates |
 | `auth` | `status`, `login`, `connect-ig`, `connect-fb`, `probe`, `logout` | `status` is configured-only; `probe` is live validation |
-| `post` | `photo`, `video`, `reel`, `carousel`, `edit MEDIA --caption`, `delete MEDIA` | Local write media requires `private-enabled` or a public URL |
+| `post` | `photo`, `video`, `reel`, `carousel`, `edit MEDIA --caption`, `delete MEDIA` | Local write media requires `private-enabled` or a public URL. Graph publishes return `permalink` and `code`. Graph reels: `--cover <image URL>`, `--thumbnail <ms>`, `--no-feed` (Reels tab only; feed is the default) |
 | `dm` | `inbox`, `pending`, `approve ID`, `seen ID`, `thread ID\|@user`, `send @user "text"`, `send-media`, `search` | Cold DMs = private API only; numeric target = reply; `pending` = message requests |
 | `story` | `list [@user]`, `post-photo`, `post-video`, `viewers ID`, `delete ID` | `--link URL` adds a link sticker, `--mention @x` a mention |
 | `comments` | `list MEDIA`, `add`, `reply`, `delete`, `like`, `unlike`, `pin`, `unpin` | pass the `comment_ref` from `comments list`; like/unlike need `--enable-growth-actions` |
-| `analytics` | `profile`, `post MEDIA\|latest`, `insights MEDIA`, `account`, `hashtag TAG` | `insights`/`account` need a Business or Creator account |
+| `analytics` | `profile`, `post MEDIA\|latest`, `insights MEDIA`, `account [--day YYYY-MM-DD]`, `summary [--limit N]`, `hashtag TAG` | `insights` picks the metrics each media type has (reels add watch time, stories navigation), drops ones Meta turns down (`dropped_metrics`), and returns `not_enough_viewers: true` instead of an error. `summary` (Graph only, about N + stories + 3 calls) gives profile counts, today's totals, the latest N posts and current stories with insights in one call. A post's `follows` counts every account that followed after it, bots included |
 | `followers` | `list [--user @x]`, `following [--user @x]`, `follow @user`, `unfollow @user` | defaults to your account; follow/unfollow need `--enable-growth-actions` |
 | `user` | `info @user`, `search QUERY [--limit N]`, `posts @user`, `tagged @user` | official search is username-style lookup, broad search is private |
 | `hashtag` | `top TAG`, `recent TAG` | |
