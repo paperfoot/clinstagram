@@ -253,9 +253,13 @@ def _instantiate_backend(ctx: typer.Context, backend_name: str, feature: Feature
     raise ValueError(f"Unknown backend: {backend_name}")
 
 
-def _output_response(ctx: typer.Context, response: CLIResponse) -> None:
+def _output_response(
+    ctx: typer.Context, response: CLIResponse, render: Callable[[Any], None] | None = None
+) -> None:
     if ctx.obj["json"]:
         typer.echo(response.to_json())
+    elif render is not None:
+        render(response.data)
     else:
         if isinstance(response.data, list):
             for item in response.data:
@@ -358,9 +362,17 @@ def shape_output(ctx: typer.Context, data: Any) -> Any:
     return compact_data(data)
 
 
-def output_success(ctx: typer.Context, data: Any, backend_used: str | None = None) -> None:
-    """Emit a standard success envelope."""
-    _output_response(ctx, CLIResponse(data=shape_output(ctx, data), backend_used=backend_used))
+def output_success(
+    ctx: typer.Context,
+    data: Any,
+    backend_used: str | None = None,
+    render: Callable[[Any], None] | None = None,
+) -> None:
+    """Emit a standard success envelope. Without --json, `render` (if given) prints the
+    data for people instead of the generic key: value lines; --fields output skips it."""
+    if (ctx.obj or {}).get("fields"):
+        render = None
+    _output_response(ctx, CLIResponse(data=shape_output(ctx, data), backend_used=backend_used), render)
 
 
 def output_error(ctx: typer.Context, error: CLIError) -> None:
@@ -489,8 +501,16 @@ def dispatch(
     feature: Feature,
     action: Callable[[Backend], Any],
     preferred_backend: str | None = None,
+    *,
+    render: Callable[[Any], None] | None = None,
+    private_fallback: bool = True,
 ) -> None:
-    """Route feature → backend → call action → output result."""
+    """Route feature → backend → call action → output result.
+
+    `render` prints a success for people when --json is off. `private_fallback=False`
+    keeps a Meta permission refusal as the answer instead of re-running on the private
+    API, for commands that only work on Graph.
+    """
     backend_name = resolve_backend_name(ctx, feature, preferred_backend=preferred_backend)
 
     if backend_name is None:
@@ -565,7 +585,7 @@ def dispatch(
         # which would corrupt the JSON envelope agents parse. Send it to stderr.
         with contextlib.redirect_stdout(sys.stderr):
             result = action(backend)
-        output_success(ctx, result, backend_used=backend_name)
+        output_success(ctx, result, backend_used=backend_name, render=render)
     except typer.Exit:
         raise  # an envelope was already written (e.g. --fields validation)
     except NotImplementedError as exc:
@@ -595,23 +615,26 @@ def dispatch(
                 error=error_str,
                 challenge_type="unknown",
             ))
-        elif kind == "permission" and _can_fall_back_to_private(ctx, feature, backend_name):
+        elif kind == "permission" and private_fallback and _can_fall_back_to_private(ctx, feature, backend_name):
             # Meta withheld the permission (e.g. hashtag search needs App Review), but this
             # account also has the private API: answer from there instead of failing.
             ctx.obj["_permission_fallback"] = True
             cleanup_temp_files()
             _close_http_client(ctx)
-            dispatch(ctx, feature, action, preferred_backend="private")
+            dispatch(ctx, feature, action, preferred_backend="private", render=render)
             return
         elif kind == "permission":
             acct = ctx.obj.get("account") or "default"
+            # A Graph-only command (private_fallback=False) can't take the private-API route.
+            other_route = (f", or try: clinstagram --account {acct} --backend private ..."
+                           if private_fallback else ".")
             output_error(ctx, CLIError(
                 exit_code=ExitCode.CAPABILITY_UNAVAILABLE,
                 error=f"Meta refused: the {backend_name} token for '{acct}' lacks the permission for this call ({error_str})",
                 remediation=(
                     "Not retryable. Insights need instagram_manage_insights; looking up other accounts "
                     "needs business discovery. Add the permission to the Meta app's login configuration and "
-                    f"regenerate the token, or try: clinstagram --account {acct} --backend private ..."
+                    f"regenerate the token{other_route}"
                 ),
             ))
         elif kind == "auth":

@@ -96,6 +96,18 @@ def _is_fatal(exc: GraphAPIError) -> bool:
             or (isinstance(code, int) and 80001 <= code <= 80014))
 
 
+_PERMISSION_CODES = {3, 10} | set(range(200, 300))  # the app or token lacks the permission
+
+
+def _first_line(text: str | None, width: int = 80) -> str | None:
+    """A caption's first non-empty line, cut to `width` characters."""
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if line:
+            return line if len(line) <= width else line[: width - 1].rstrip() + "…"
+    return None
+
+
 class GraphBackend(Backend):
     """Instagram Graph API / Facebook Graph API backend."""
 
@@ -770,6 +782,118 @@ class GraphBackend(Backend):
         # Meta can't report on time that hasn't happened: today's range ends now.
         until = max(since + 1, min(since + 86400, int(now)))
         return f"{start:%Y-%m-%d}", since, until
+
+    _SUMMARY_MEDIA_FIELDS = "id,caption,media_type,media_product_type,timestamp,permalink"
+
+    def analytics_summary(self, limit: int = 12) -> dict:
+        """Profile counts, today's account insights, the latest `limit` posts and the
+        current stories, each with the insights its type has.
+
+        About limit + stories + 4 Graph calls: profile, today, the post list, the story
+        list, then one insights call per post and per story. Add one for a Facebook-login
+        token with no stored IG user id, and a retry per media type for a metric Meta
+        rejects (learned once, then left out). Dead tokens and rate limits stop the
+        summary, and so does a refused post list; any other failure is reported where it
+        happened.
+        """
+        out: dict[str, Any] = {"profile": self._summary_profile()}
+        me = self._me_id()
+        errors: dict[str, str] = {}
+        try:
+            out["today"] = self.analytics_account()
+        except GraphAPIError as exc:
+            if _is_fatal(exc):
+                raise
+            errors["today"] = str(exc)
+        try:
+            posts = self._get(f"{me}/media", {"fields": self._SUMMARY_MEDIA_FIELDS,
+                                              "limit": str(limit)}).get("data", [])
+        except GraphAPIError as exc:
+            if exc.code in _PERMISSION_CODES:
+                # Profile fine, posts refused: how a token Meta cut off looks (3 Nov 2026).
+                raise GraphAPIError(
+                    exc.status_code, exc.error_type,
+                    f"Meta read this account's profile but refused its posts ({exc}). A token that "
+                    "worked before and now does this has been cut off on Meta's side (seen after "
+                    "Boost and Facebook-linking changes): generate a new one in the Meta app "
+                    "dashboard (Instagram API → API setup with Unified login → 2. Generate access "
+                    "tokens → Generate token on the account's row), then run: clinstagram auth "
+                    f"connect-{self._login_type} --token <token>",
+                    code=exc.code, subcode=exc.subcode,
+                ) from exc
+            raise
+        skip: dict[str, set[str]] = {}  # media group -> metrics Meta rejected for it this run
+        out["media"] = [
+            self._summary_entry(p, self._metric_kind(p.get("media_type"), p.get("media_product_type")), skip)
+            for p in posts[:limit]
+        ]
+        try:
+            stories = self._get(f"{me}/stories", {
+                "fields": "id,media_type,media_product_type,timestamp,permalink",
+            }).get("data", [])
+        except GraphAPIError as exc:
+            if _is_fatal(exc):
+                raise
+            errors["stories"] = str(exc)
+            stories = []
+        out["stories"] = [self._summary_entry(s, "STORY", skip) for s in stories]
+        dropped = {
+            group: [m for m in self._MEDIA_METRICS[self._group_kind(group)] if m in bad]
+            for group, bad in skip.items() if bad
+        }
+        if dropped:
+            out["dropped_metrics"] = dropped
+        if errors:
+            out["errors"] = errors
+        return out
+
+    def _summary_profile(self) -> dict:
+        fields = "id,username,followers_count,follows_count,media_count"
+        if self._me_id_cache is None and self._login_type == "ig":
+            # With Instagram login /me is the IG user, so one call also finds its id.
+            data = self._get("me", {"fields": fields}) or {}
+            self._me_id_cache = data["id"]
+        else:
+            data = self._get(self._me_id(), {"fields": fields}) or {}
+        return {
+            "username": data.get("username"),
+            "followers_count": data.get("followers_count"),
+            "following_count": data.get("follows_count"),
+            "media_count": data.get("media_count"),
+        }
+
+    @staticmethod
+    def _media_group(kind: str, media_type: str | None) -> str:
+        """Media Meta treats alike for metrics: REELS, STORY, or each feed media type
+        (a metric a carousel lacks may still work on an image)."""
+        return (media_type or kind) if kind == "FEED" else kind
+
+    @staticmethod
+    def _group_kind(group: str) -> str:
+        return group if group in ("REELS", "STORY") else "FEED"
+
+    def _summary_entry(self, item: dict, kind: str, skip: dict[str, set[str]]) -> dict:
+        entry: dict[str, Any] = {
+            "id": str(item["id"]),
+            "media_type": item.get("media_type"),
+            "product_type": item.get("media_product_type"),
+            "timestamp": item.get("timestamp"),
+            "caption": _first_line(item.get("caption")),
+            "permalink": item.get("permalink"),
+        }
+        group = self._media_group(kind, entry["media_type"])
+        try:
+            found = self._insights(f"{entry['id']}/insights", self._MEDIA_METRICS[kind],
+                                   skip=skip.setdefault(group, set()))
+        except GraphAPIError as exc:
+            if _is_fatal(exc):
+                raise
+            # e.g. a post from before the switch to a business account: note it, carry on.
+            entry["insights_error"] = str(exc)
+            return entry
+        found.pop("dropped_metrics", None)  # reported once per media group, at the top
+        entry.update(found)
+        return entry
 
     @staticmethod
     def _flatten_insights(data: Any) -> dict:

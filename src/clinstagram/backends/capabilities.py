@@ -73,6 +73,7 @@ class Feature(str, Enum):
     ACTIVITY = "activity"
     ANALYTICS_INSIGHTS = "analytics_insights"
     ANALYTICS_ACCOUNT = "analytics_account"
+    ANALYTICS_SUMMARY = "analytics_summary"  # Graph-only; the command refuses the private API
     # Prospecting
     USER_TAGGED = "user_tagged"
 
@@ -83,7 +84,8 @@ CAPABILITY_MATRIX: dict[str, set[Feature]] = {
         Feature.COMMENTS_LIST, Feature.COMMENTS_REPLY, Feature.COMMENTS_DELETE,
         Feature.COMMENTS_ADD,
         Feature.ANALYTICS_PROFILE, Feature.ANALYTICS_POST, Feature.ANALYTICS_HASHTAG,
-        Feature.ANALYTICS_INSIGHTS, Feature.ANALYTICS_ACCOUNT, Feature.PROFILE_SHOW,
+        Feature.ANALYTICS_INSIGHTS, Feature.ANALYTICS_ACCOUNT, Feature.ANALYTICS_SUMMARY,
+        Feature.PROFILE_SHOW,
         Feature.HASHTAG_TOP, Feature.HASHTAG_RECENT,
     },
     "graph_fb": {
@@ -94,7 +96,8 @@ CAPABILITY_MATRIX: dict[str, set[Feature]] = {
         Feature.COMMENTS_LIST, Feature.COMMENTS_REPLY, Feature.COMMENTS_DELETE,
         Feature.COMMENTS_ADD,
         Feature.ANALYTICS_PROFILE, Feature.ANALYTICS_POST, Feature.ANALYTICS_HASHTAG,
-        Feature.ANALYTICS_INSIGHTS, Feature.ANALYTICS_ACCOUNT, Feature.PROFILE_SHOW,
+        Feature.ANALYTICS_INSIGHTS, Feature.ANALYTICS_ACCOUNT, Feature.ANALYTICS_SUMMARY,
+        Feature.PROFILE_SHOW,
         Feature.HASHTAG_TOP, Feature.HASHTAG_RECENT,
         Feature.USER_INFO, Feature.USER_SEARCH,
     },
@@ -112,7 +115,7 @@ READ_ONLY_FEATURES: set[Feature] = {
     Feature.HASHTAG_TOP, Feature.HASHTAG_RECENT,
     Feature.MEDIA_DOWNLOAD, Feature.MEDIA_LIKERS,
     Feature.PROFILE_SHOW, Feature.ACTIVITY,
-    Feature.ANALYTICS_INSIGHTS, Feature.ANALYTICS_ACCOUNT,
+    Feature.ANALYTICS_INSIGHTS, Feature.ANALYTICS_ACCOUNT, Feature.ANALYTICS_SUMMARY,
     Feature.USER_TAGGED,
 }
 

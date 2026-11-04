@@ -254,6 +254,7 @@ def test_cli_missing_permission_is_still_exit_7(monkeypatch, tmp_path):
     result, body = run("analytics", "insights", "777")
     assert result.exit_code == 7
     assert "does not have permission" in body["error"]
+    assert "--backend private" in body["remediation"]
 
 
 # ── Account insights for a UTC day ──────────────────────────────────
@@ -342,3 +343,244 @@ def test_cli_account_day_on_the_private_api_is_exit_7(monkeypatch, tmp_path):
     assert result.exit_code == 7
     assert "Graph API" in body["error"]
     private.analytics_account.assert_not_called()
+
+
+# ── analytics summary ───────────────────────────────────────────────
+
+PROFILE = {"id": "42", "username": "agingresearch.news", "followers_count": 1200,
+           "follows_count": 15, "media_count": 57}
+LONG_FIRST_LINE = ("Rapamycin extended median lifespan in mice by up to 25 percent, and the dose timing "
+                   "mattered more than the dose")
+
+
+def summary_routes(**overrides) -> dict:
+    """A healthy account: 3 posts (reel, carousel, image), 2 stories (one too new)."""
+    routes = {
+        "GET /me": PROFILE,
+        "GET /42": PROFILE,
+        "GET /42/insights": totals(reach=900, views=3000, accounts_engaged=40),
+        "GET /42/media": {"data": [
+            {"id": "m1", "media_type": "VIDEO", "media_product_type": "REELS",
+             "timestamp": "2026-11-03T09:15:00+0000", "permalink": "https://www.instagram.com/reel/R1/",
+             "caption": f"\n{LONG_FIRST_LINE}\n\nSource: Nature Aging"},
+            {"id": "m2", "media_type": "CAROUSEL_ALBUM", "media_product_type": "FEED",
+             "timestamp": "2026-11-02T18:00:00+0000", "permalink": "https://www.instagram.com/p/C2/",
+             "caption": "Five ways to keep muscle after 60"},
+            {"id": "m3", "media_type": "IMAGE", "media_product_type": "FEED",
+             "timestamp": "2026-11-01T08:00:00+0000", "permalink": "https://www.instagram.com/p/I3/"},
+        ]},
+        "GET /m1/insights": insights(reach=500, views=1500, ig_reels_avg_watch_time=4200),
+        "GET /m2/insights": [
+            graph_error(100, "(#100) The following metrics are not supported for this media: profile_visits, follows"),
+            insights(reach=80, saved=4),
+        ],
+        "GET /m3/insights": insights(reach=30),
+        "GET /42/stories": {"data": [
+            {"id": "s1", "media_type": "IMAGE", "media_product_type": "STORY",
+             "timestamp": "2026-11-03T07:00:00+0000", "permalink": "https://www.instagram.com/stories/x/s1/"},
+            {"id": "s2", "media_type": "VIDEO", "media_product_type": "STORY",
+             "timestamp": "2026-11-03T11:00:00+0000", "permalink": "https://www.instagram.com/stories/x/s2/"},
+        ]},
+        "GET /s1/insights": insights(reach=60, replies=2),
+        "GET /s2/insights": NOT_ENOUGH_VIEWERS,
+    }
+    routes.update(overrides)
+    return routes
+
+
+def summary_backend(fake: FakeGraph, login_type: str = "ig", ig_user_id: str | None = None) -> GraphBackend:
+    backend = fake.backend(login_type=login_type, ig_user_id=ig_user_id)
+    backend._now = lambda: NOV_3_NOON
+    return backend
+
+
+@pytest.mark.parametrize("login_type,ig_user_id,lookup", [
+    ("ig", None, ["/me"]),         # with Instagram login the profile call doubles as /me
+    ("fb", "42", ["/42"]),         # stored IG user id: no lookup
+    ("fb", None, ["/me", "/42"]),  # Facebook login, nothing stored: one extra call
+])
+def test_summary_costs_n_plus_stories_plus_four_calls(login_type, ig_user_id, lookup):
+    fake = FakeGraph(summary_routes(**{
+        "GET /42/media": {"data": [{"id": "m1", "media_type": "VIDEO", "media_product_type": "REELS"},
+                                   {"id": "m3", "media_type": "IMAGE", "media_product_type": "FEED"}]},
+        "GET /42/stories": {"data": [{"id": "s1", "media_type": "IMAGE", "media_product_type": "STORY"}]},
+    }))
+    summary_backend(fake, login_type, ig_user_id).analytics_summary(limit=2)
+    n, stories = 2, 1
+    assert len(fake.requests) == n + stories + 4 + (len(lookup) - 1)
+    assert [r.url.path.removeprefix("/v21.0") for r in fake.requests] == lookup + [
+        "/42/insights", "/42/media", "/m1/insights", "/m3/insights", "/42/stories", "/s1/insights",
+    ]
+    assert fake.calls("/42/media")[0].url.params["limit"] == "2"
+
+
+def test_summary_reports_each_post_and_story_with_its_own_metrics():
+    posts = summary_routes()["GET /42/media"]["data"]
+    second_carousel = {"id": "m4", "media_type": "CAROUSEL_ALBUM", "media_product_type": "FEED",
+                       "timestamp": "2026-11-01T20:00:00+0000", "permalink": "https://www.instagram.com/p/C4/"}
+    fake = FakeGraph(summary_routes(**{
+        "GET /42/media": {"data": posts[:2] + [second_carousel] + posts[2:]},
+        "GET /m4/insights": insights(reach=44),
+    }))
+    data = summary_backend(fake).analytics_summary(limit=4)
+
+    assert data["profile"] == {"username": "agingresearch.news", "followers_count": 1200,
+                               "following_count": 15, "media_count": 57}
+    assert data["today"] == {"period": "day", "day": "2026-11-03",
+                             "insights": {"reach": 900, "views": 3000, "accounts_engaged": 40}}
+    reel, carousel, _, image = data["media"]
+    assert reel["media_type"] == "VIDEO" and reel["product_type"] == "REELS"
+    assert reel["timestamp"] == "2026-11-03T09:15:00+0000"
+    assert reel["permalink"] == "https://www.instagram.com/reel/R1/"
+    assert reel["insights"] == {"reach": 500, "views": 1500, "ig_reels_avg_watch_time": 4200}
+    assert len(reel["caption"]) == 80 and reel["caption"].endswith("…")
+    assert LONG_FIRST_LINE.startswith(reel["caption"][:-1])
+    assert carousel["caption"] == "Five ways to keep muscle after 60"
+    assert carousel["insights"] == {"reach": 80, "saved": 4}
+    assert image["caption"] is None
+    assert [s["id"] for s in data["stories"]] == ["s1", "s2"]
+    assert data["stories"][0]["insights"] == {"reach": 60, "replies": 2}
+    assert data["stories"][1]["insights"] == {} and data["stories"][1]["not_enough_viewers"] is True
+    assert "not_enough_viewers" not in data["stories"][0]
+    assert data["dropped_metrics"] == {"CAROUSEL_ALBUM": ["profile_visits", "follows"]}
+    assert "errors" not in data
+
+    assert fake.metrics("/m1/insights") == [REELS]
+    assert fake.metrics("/s1/insights") == [STORY]
+    # Learned on the first carousel, so the next one is asked without them: no second retry.
+    assert fake.metrics("/m4/insights") == ["reach,views,likes,comments,saved,shares,total_interactions"]
+    # An image is its own group: what a carousel lacks may still work there.
+    assert fake.metrics("/m3/insights") == [FEED]
+    assert len(fake.requests) == 4 + 2 + 4 + 1  # one retry for the carousel metrics
+
+
+def test_summary_notes_failures_where_they_happen_and_carries_on():
+    fake = FakeGraph(summary_routes(**{
+        "GET /42/insights": NO_PERMISSION,
+        "GET /m2/insights": graph_error(
+            100, "Invalid parameter", error_subcode=2108006,
+            error_user_msg="The media was posted before the account was converted to a business account."),
+        "GET /42/stories": graph_error(10, "(#10) Application does not have permission for this action"),
+    }))
+    data = summary_backend(fake).analytics_summary(limit=3)
+    assert "does not have permission" in data["errors"]["today"]
+    assert "does not have permission" in data["errors"]["stories"]
+    assert "today" not in data
+    assert data["stories"] == []
+    assert "converted to a business account" in data["media"][1]["insights_error"]
+    assert data["media"][0]["insights"]["reach"] == 500
+    assert data["media"][2]["insights"] == {"reach": 30}
+
+
+def test_summary_explains_a_token_meta_cut_off():
+    # 3 Nov 2026: after Boost, profile reads worked but the post list said (#10).
+    fake = FakeGraph(summary_routes(**{"GET /42/media": NO_PERMISSION}))
+    with pytest.raises(GraphAPIError) as err:
+        summary_backend(fake).analytics_summary()
+    assert err.value.code == 10
+    message = str(err.value)
+    assert "refused its posts" in message and "(#10) Application does not have permission" in message
+    assert "Generate token on the account's row" in message
+    assert "clinstagram auth connect-ig --token <token>" in message
+
+
+@pytest.mark.parametrize("fatal", [
+    graph_error(4, "(#4) Application request limit reached"),
+    graph_error(190, "Error validating access token: Session has expired", status=401),
+])
+def test_summary_stops_on_rate_limits_and_dead_tokens(fatal):
+    fake = FakeGraph(summary_routes(**{"GET /m1/insights": fatal}))
+    with pytest.raises(GraphAPIError) as err:
+        summary_backend(fake).analytics_summary(limit=3)
+    assert err.value.code in (4, 190)
+    assert fake.calls("/m2/insights") == []  # nothing after the fatal error
+
+
+def test_first_caption_line():
+    from clinstagram.backends.graph import _first_line
+
+    assert _first_line("\n  \n  Hello there  \nsecond") == "Hello there"
+    assert _first_line("") is None and _first_line(None) is None
+    assert _first_line("x" * 80) == "x" * 80
+    assert _first_line("x" * 81) == "x" * 79 + "…"
+
+
+def test_cli_summary_json(monkeypatch, tmp_path):
+    fake = FakeGraph(summary_routes())
+    run, _ = graph_cli(monkeypatch, tmp_path, summary_backend(fake))
+    result, body = run("analytics", "summary", "--limit", "3")
+    assert result.exit_code == 0, result.output
+    assert body["backend_used"] == "graph_ig"
+    data = body["data"]
+    assert set(data) == {"profile", "today", "media", "stories", "dropped_metrics"}
+    assert data["media"][2] == {"id": "m3", "media_type": "IMAGE", "product_type": "FEED",
+                                "timestamp": "2026-11-01T08:00:00+0000",
+                                "permalink": "https://www.instagram.com/p/I3/", "insights": {"reach": 30}}
+    assert '": ' not in result.output  # compact separators
+
+
+def test_cli_summary_token_cut_off_is_exit_7_without_private_rerun(monkeypatch, tmp_path):
+    fake = FakeGraph(summary_routes(**{"GET /42/media": NO_PERMISSION}))
+    run, private = graph_cli(monkeypatch, tmp_path, summary_backend(fake), backends=("graph_ig", "private"))
+    result, body = run("analytics", "summary")
+    assert result.exit_code == 7
+    assert "Generate token on the account's row" in body["error"]
+    assert "--backend private" not in body["remediation"]  # the summary can't go that way
+    assert private.method_calls == []
+
+
+def test_cli_summary_needs_graph(monkeypatch, tmp_path):
+    run, private = graph_cli(monkeypatch, tmp_path, summary_backend(FakeGraph({})), backends=("private",))
+    result, body = run("analytics", "summary")
+    assert result.exit_code == 7
+    assert "Graph API" in body["error"]
+    assert "connect-ig" in body["remediation"]
+    assert private.method_calls == []
+
+
+@pytest.mark.parametrize("limit", ["0", "51", "-3"])
+def test_cli_summary_limit_bounds(monkeypatch, tmp_path, limit):
+    fake = FakeGraph({})
+    run, _ = graph_cli(monkeypatch, tmp_path, summary_backend(fake))
+    result, body = run("analytics", "summary", "--limit", limit)
+    assert result.exit_code == 1
+    assert "--limit" in body["error"]
+    assert fake.requests == []
+
+
+def test_cli_summary_dry_run_and_help_state_the_cost(monkeypatch, tmp_path):
+    run, _ = graph_cli(monkeypatch, tmp_path, summary_backend(FakeGraph({})))
+    result, body = run("--dry-run", "analytics", "summary")
+    assert result.exit_code == 0, result.output
+    assert body["data"] == {"dry_run": True, "feature": "analytics_summary", "backend": "graph_ig"}
+    manifest = json.loads(CliRunner().invoke(app, ["agent-info"]).output)
+    assert "N + S + 4" in manifest["commands"]["analytics summary"]["description"]
+    assert "N + S + 4" in CliRunner().invoke(app, ["analytics", "summary", "--help"]).output
+
+
+def test_summary_table_for_people():
+    from clinstagram.commands.analytics import summary_lines
+
+    fake = FakeGraph(summary_routes())
+    data = summary_backend(fake).analytics_summary(limit=3)
+    text = "\n".join(summary_lines(data))
+    assert "@agingresearch.news  followers 1,200  following 15  posts 57" in text
+    assert "Today (2026-11-03 UTC, so far): reach 900  views 3,000  accounts engaged 40" in text
+    assert "2026-11-03 09:15  REEL" in text and "CAROUSEL" in text
+    assert "https://www.instagram.com/reel/R1/" in text
+    assert "Stories up now (2)" in text and "not enough viewers" in text
+    assert "Meta didn't offer: carousel profile_visits, follows" in text
+
+
+def test_render_hook_is_for_people_only(capsys):
+    from types import SimpleNamespace
+
+    from clinstagram.commands._dispatch import output_success
+
+    seen = []
+    output_success(SimpleNamespace(obj={"json": False}), {"a": 1, "b": None}, render=seen.append)
+    assert seen == [{"a": 1}]  # shaped (compact) data
+    output_success(SimpleNamespace(obj={"json": True}), {"a": 1}, render=seen.append)
+    assert len(seen) == 1 and json.loads(capsys.readouterr().out)["data"] == {"a": 1}
+    output_success(SimpleNamespace(obj={"json": False, "fields": "a"}), {"a": 1}, render=seen.append)
+    assert len(seen) == 1 and "a: 1" in capsys.readouterr().out
