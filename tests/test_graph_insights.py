@@ -345,6 +345,29 @@ def test_cli_account_day_on_the_private_api_is_exit_7(monkeypatch, tmp_path):
     private.analytics_account.assert_not_called()
 
 
+def test_cli_account_day_keeps_metas_refusal_instead_of_trying_the_private_api(monkeypatch, tmp_path):
+    # The private API can't do --day; re-running there would hide Meta's reason behind
+    # "--day needs the Graph API" on an account that has it.
+    fake = FakeGraph({"GET /42/insights": NO_PERMISSION})
+    run, private = graph_cli(monkeypatch, tmp_path, account_backend(fake), backends=("graph_ig", "private"))
+    result, body = run("analytics", "account", "--day", "2025-06-01")
+    assert result.exit_code == 7
+    assert "(#10) Application does not have permission" in body["error"]
+    assert "instagram_manage_insights" in body["remediation"]
+    assert "--backend private" not in body["remediation"]
+    assert private.method_calls == []
+
+
+def test_cli_account_without_day_still_answers_from_the_private_api(monkeypatch, tmp_path):
+    fake = FakeGraph({"GET /42/insights": NO_PERMISSION})
+    run, private = graph_cli(monkeypatch, tmp_path, account_backend(fake), backends=("graph_ig", "private"))
+    private.analytics_account.return_value = {"period": "day", "insights": {"reach": 11}}
+    result, body = run("analytics", "account")
+    assert result.exit_code == 0, result.output
+    assert body["backend_used"] == "private"
+    assert body["data"]["insights"] == {"reach": 11}
+
+
 # ── analytics summary ───────────────────────────────────────────────
 
 PROFILE = {"id": "42", "username": "agingresearch.news", "followers_count": 1200,

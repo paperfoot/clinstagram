@@ -94,7 +94,8 @@ def account(
             ))
         return b.analytics_account()
 
-    dispatch(ctx, Feature.ANALYTICS_ACCOUNT, action)
+    # The private API can't answer for a given day, so a Graph refusal of --day is the answer.
+    dispatch(ctx, Feature.ANALYTICS_ACCOUNT, action, private_fallback=day is None)
 
 
 SUMMARY_MAX_LIMIT = 50  # one page of posts, and a bounded number of insights calls
