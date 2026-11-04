@@ -117,18 +117,9 @@ def summary(
             error=f"--limit must be between 1 and {SUMMARY_MAX_LIMIT}, got {limit}",
         ))
 
-    def action(b):
-        if not ctx.obj["_backend_name"].startswith("graph"):
-            acct = ctx.obj.get("account") or "default"
-            output_error(ctx, CLIError(
-                exit_code=ExitCode.CAPABILITY_UNAVAILABLE,
-                error="analytics summary runs on the Graph API (graph_ig or graph_fb), not the private API",
-                remediation=(f"Drop --backend private, or connect Graph: clinstagram --account {acct} "
-                             "auth connect-ig --token <token>. For one post: clinstagram analytics insights <ref>"),
-            ))
-        return b.analytics_summary(limit)
-
-    dispatch(ctx, Feature.ANALYTICS_SUMMARY, action, render=_print_summary, private_fallback=False)
+    # Graph-only (GRAPH_ONLY_FEATURES): routing never hands this to the private API.
+    dispatch(ctx, Feature.ANALYTICS_SUMMARY, lambda b: b.analytics_summary(limit),
+             render=_print_summary, private_fallback=False)
 
 
 # ── Readable summary (no --json) ────────────────────────────────────

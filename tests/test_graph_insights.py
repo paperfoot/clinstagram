@@ -220,6 +220,9 @@ def graph_cli(monkeypatch, tmp_path, backend: GraphBackend, backends=("graph_ig"
         secrets.set(account, BACKEND_TOKEN_MAP[name], "fake-token")
     private = MagicMock()
     private.name = "private"
+    # Fail fast if routing ever sends the Graph-only summary here (a MagicMock result
+    # would make the JSON encoder loop forever instead).
+    private.analytics_summary.side_effect = AssertionError("analytics summary reached the private API")
     monkeypatch.setattr("clinstagram.commands._dispatch._get_secrets", lambda ctx: secrets)
     monkeypatch.setattr("clinstagram.commands._dispatch._instantiate_backend",
                         lambda ctx, name, feature=None: backend if name.startswith("graph") else private)
@@ -594,13 +597,34 @@ def test_cli_summary_cut_off_says_how_to_reconnect_this_account(monkeypatch, tmp
     assert "instagram_manage_insights" not in body["remediation"]
 
 
-def test_cli_summary_needs_graph(monkeypatch, tmp_path):
-    run, private = graph_cli(monkeypatch, tmp_path, summary_backend(FakeGraph({})), backends=("private",))
-    result, body = run("analytics", "summary")
-    assert result.exit_code == 7
-    assert "Graph API" in body["error"]
-    assert "connect-ig" in body["remediation"]
+@pytest.mark.parametrize("mode", ["hybrid-safe", "official-only"])
+def test_cli_summary_needs_graph(monkeypatch, tmp_path, mode):
+    # Graph-only, so no compliance mode makes the private API do it: exit 7 in every mode,
+    # never exit 6 with advice to change the mode.
+    run, private = graph_cli(monkeypatch, tmp_path, summary_backend(FakeGraph({})), backends=("private",),
+                             account="solo")
+    assert run("config", "mode", mode)[0].exit_code == 0
+    result, body = run("--account", "solo", "analytics", "summary")
+    assert result.exit_code == 7, result.output
+    assert "can't do 'analytics_summary'" in body["error"]
+    assert body["remediation"].startswith("Only the Graph API (graph_ig, graph_fb) can do 'analytics_summary'")
+    assert body["remediation"].endswith("add one: clinstagram --account solo auth connect-ig --token <token>")
     assert private.method_calls == []
+
+
+def test_cli_summary_refuses_forced_private_backend(monkeypatch, tmp_path):
+    run, private = graph_cli(monkeypatch, tmp_path, summary_backend(FakeGraph({})), backends=("graph_ig", "private"))
+    result, body = run("--backend", "private", "analytics", "summary")
+    assert result.exit_code == 7
+    assert "does not support 'analytics_summary'" in body["error"]
+    assert private.method_calls == []
+
+
+def test_agent_info_lists_the_summary_under_graph_only():
+    backends = json.loads(CliRunner().invoke(app, ["agent-info"]).output)["backends"]
+    assert "analytics_summary" in backends["graph_ig"]["capabilities"]
+    assert "analytics_summary" in backends["graph_fb"]["capabilities"]
+    assert "analytics_summary" not in backends["private"]["capabilities"]
 
 
 @pytest.mark.parametrize("limit", ["0", "51", "-3"])

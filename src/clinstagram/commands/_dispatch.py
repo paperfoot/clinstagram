@@ -555,6 +555,11 @@ def dispatch(
                 remediation = (f"Only the private (unofficial) API can do '{feature.value}', and account '{account}' "
                                f"has only {', '.join(have)}. Use an account that has 'private' (clinstagram account list), "
                                f"or add it: clinstagram --account {account} auth login -u <username>")
+            elif "private" not in able:
+                graph = "graph_ig" if "graph_ig" in able else "graph_fb"
+                remediation = (f"Only the Graph API ({', '.join(able)}) can do '{feature.value}', and account "
+                               f"'{account}' has only {', '.join(have)}. Use an account that has a graph_* backend "
+                               f"(clinstagram account list), or add one: {_graph_reconnect(account, graph)}")
             else:
                 remediation = (f"Backends that can: {', '.join(able) or 'none'}. Account '{account}' has: "
                                f"{', '.join(have)}. See: clinstagram account list")

@@ -1,4 +1,4 @@
-from clinstagram.backends.capabilities import Feature, can_backend_do
+from clinstagram.backends.capabilities import GRAPH_ONLY_FEATURES, Feature, can_backend_do
 
 
 def test_graph_ig_can_post():
@@ -21,9 +21,15 @@ def test_graph_fb_cannot_cold_dm():
     assert not can_backend_do("graph_fb", Feature.DM_COLD_SEND)
 
 
-def test_private_can_everything():
+def test_private_can_everything_but_graph_only_features():
+    assert Feature.ANALYTICS_SUMMARY in GRAPH_ONLY_FEATURES
     for feat in Feature:
-        assert can_backend_do("private", feat)
+        assert can_backend_do("private", feat) == (feat not in GRAPH_ONLY_FEATURES), feat
+
+
+def test_graph_only_features_run_on_graph():
+    for feat in GRAPH_ONLY_FEATURES:
+        assert can_backend_do("graph_ig", feat) or can_backend_do("graph_fb", feat), feat
 
 
 def test_feature_enum_completeness():

@@ -73,10 +73,14 @@ class Feature(str, Enum):
     ACTIVITY = "activity"
     ANALYTICS_INSIGHTS = "analytics_insights"
     ANALYTICS_ACCOUNT = "analytics_account"
-    ANALYTICS_SUMMARY = "analytics_summary"  # Graph-only; the command refuses the private API
+    ANALYTICS_SUMMARY = "analytics_summary"  # Graph-only: see GRAPH_ONLY_FEATURES
     # Prospecting
     USER_TAGGED = "user_tagged"
 
+
+# Built from Graph API calls alone, with no private-API version: routing, agent-info and
+# errors never offer the private API for them.
+GRAPH_ONLY_FEATURES: set[Feature] = {Feature.ANALYTICS_SUMMARY}
 
 CAPABILITY_MATRIX: dict[str, set[Feature]] = {
     "graph_ig": {
@@ -101,7 +105,7 @@ CAPABILITY_MATRIX: dict[str, set[Feature]] = {
         Feature.HASHTAG_TOP, Feature.HASHTAG_RECENT,
         Feature.USER_INFO, Feature.USER_SEARCH,
     },
-    "private": set(Feature),
+    "private": set(Feature) - GRAPH_ONLY_FEATURES,
 }
 
 READ_ONLY_FEATURES: set[Feature] = {
