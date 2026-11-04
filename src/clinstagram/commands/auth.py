@@ -103,7 +103,7 @@ def _reconnect_hint(backend_name: str, account: str, ig_user_id: Optional[str] =
     suffix = backend_name.split("_", 1)[1]
     cmd = f"pbpaste | clinstagram --account {shlex.quote(account)} auth connect-{suffix} --token-stdin"
     if suffix == "fb":
-        cmd += f" --ig-user-id {ig_user_id or '<id>'}"
+        cmd += f" --ig-user-id {shlex.quote(ig_user_id) if ig_user_id else '<id>'}"
     return cmd
 
 

@@ -149,8 +149,8 @@ def run_doctor(ctx: typer.Context, deep: bool = False, account: str | None = Non
                 f"not configured for account '{target_account}'",
                 {
                     "private_session": f"clinstagram auth login --username <user> --account {target_account}",
-                    "graph_ig_token": f"clinstagram auth connect-ig --account {target_account}",
-                    "graph_fb_token": f"clinstagram auth connect-fb --account {target_account}",
+                    "graph_ig_token": f"pbpaste | clinstagram --account {target_account} auth connect-ig --token-stdin",
+                    "graph_fb_token": f"pbpaste | clinstagram --account {target_account} auth connect-fb --token-stdin --ig-user-id <id>",
                 }[slot],
             ))
             continue

@@ -659,8 +659,9 @@ def test_cli_summary_cut_off_says_how_to_reconnect_this_account(monkeypatch, tmp
     assert result.exit_code == 7, result.output
     suffix = backends[0].split("_")[1]
     assert body["error"].startswith(f"Meta refused the {backends[0]} token for 'channel'. Meta reads")
-    assert body["remediation"].endswith(
-        f"then: clinstagram --account channel auth connect-{suffix} --token <token>")
+    reconnect = f"then: pbpaste | clinstagram --account channel auth connect-{suffix} --token-stdin"
+    assert body["remediation"].endswith(reconnect + (" --ig-user-id <id>" if suffix == "fb" else ""))
+    assert "--token <" not in body["remediation"]  # never ask for the token on the command line
     assert "instagram_manage_insights" not in body["remediation"]
 
 
@@ -675,7 +676,7 @@ def test_cli_summary_needs_graph(monkeypatch, tmp_path, mode):
     assert result.exit_code == 7, result.output
     assert "can't do 'analytics_summary'" in body["error"]
     assert body["remediation"].startswith("Only the Graph API (graph_ig, graph_fb) can do 'analytics_summary'")
-    assert body["remediation"].endswith("add one: clinstagram --account solo auth connect-ig --token <token>")
+    assert body["remediation"].endswith("add one: pbpaste | clinstagram --account solo auth connect-ig --token-stdin")
     assert private.method_calls == []
 
 

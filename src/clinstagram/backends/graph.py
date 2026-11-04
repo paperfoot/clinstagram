@@ -340,7 +340,7 @@ class GraphBackend(Backend):
                 raise GraphAPIError(
                     400, "NoInstagramAccount",
                     "This Facebook token isn't linked to an Instagram account. "
-                    "Run: clinstagram auth connect-fb --token <token> --ig-user-id <id>",
+                    "Run: pbpaste | clinstagram auth connect-fb --token-stdin --ig-user-id <id>",
                 )
             self._me_id_cache = iba
         return self._me_id_cache

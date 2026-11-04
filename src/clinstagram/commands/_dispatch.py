@@ -4,6 +4,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+import shlex
 import sys
 import random
 import time
@@ -415,7 +416,9 @@ _NEW_TOKEN_STEPS = ("Instagram API → API setup with Unified login → 2. Gener
 def _graph_reconnect(account: str, backend_name: str) -> str:
     """The command that stores a new Graph token. It names the account: without
     --account, auth connect-* writes to the default account."""
-    return f"clinstagram --account {account} auth connect-{backend_name.split('_', 1)[1]} --token <token>"
+    suffix = backend_name.split("_", 1)[1]
+    cmd = f"pbpaste | clinstagram --account {shlex.quote(account)} auth connect-{suffix} --token-stdin"
+    return cmd + (" --ig-user-id <id>" if suffix == "fb" else "")
 
 
 def _backend_remediation(backend_name: str) -> str:
@@ -550,7 +553,7 @@ def dispatch(
             able = [b for b in ("graph_ig", "graph_fb", "private") if can_backend_do(b, feature)]
             if not have:
                 remediation = (f"Account '{account}' has no credentials. Run: clinstagram account list, "
-                               f"or connect it: clinstagram --account {account} auth connect-fb --token <token> --ig-user-id <id>")
+                               f"or connect it: pbpaste | clinstagram --account {shlex.quote(account)} auth connect-fb --token-stdin --ig-user-id <id>")
             elif able == ["private"]:
                 remediation = (f"Only the private (unofficial) API can do '{feature.value}', and account '{account}' "
                                f"has only {', '.join(have)}. Use an account that has 'private' (clinstagram account list), "
